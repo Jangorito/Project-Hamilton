@@ -182,3 +182,17 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+"""
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\venv\Scripts\Activate.ps1
+
+    default 2m resampling:
+python -m RL.bootstrap.beamng_bootstrap --draw-path
+
+    Without resampling:
+python -m RL.bootstrap.beamng_bootstrap --draw-path --resample-spacing 0
+
+    With denser debug spheres:
+python -m RL.bootstrap.beamng_bootstrap --draw-path --sphere-every 10
+"""

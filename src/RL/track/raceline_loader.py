@@ -121,9 +121,11 @@ def derive_race_path(decal_roads, highlight_ids: list[int], chain_slices: dict):
 
 
 def derive_race_path_from_files(
+    race_file: Path,
     items_file: Path,
     highlight_ids: list[int],
 ) -> list[Float3]:
+    data, pathnodes, segments, start_positions, node_by_id = load_race_path(race_file)
     decal_roads = load_items_lines(items_file)
     chain_slices = build_sequential_chain(decal_roads, highlight_ids)
     return derive_race_path(decal_roads, highlight_ids, chain_slices)
