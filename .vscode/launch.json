@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "BeamNG Bootstrap",
+            "type": "python",
+            "request": "launch",
+            "module": "RL.bootstrap.beamng_bootstrap",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}\\venv\\Scripts\\python.exe",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}\\src"
+            },
+            "args": ["--draw-path", "--label-every", "50"],
+            "console": "integratedTerminal"
+        }
+    ]
+}
