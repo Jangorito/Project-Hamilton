@@ -236,7 +236,7 @@ class TrackCentreline:
             segment_start_to_vehicle, self.segment_vectors_xy) / segment_length_sq
         segment_progression_projection = np.clip(raw_segment_progression_projection, 0.0, 1.0)
 
-        # TODO: add comments from here onwards...
+        # TODO: add comments from here onwards...(15. query())
         nearest_points_xy = (
             self.segment_start_points_xy + segment_progression_projection[:, None] * self.segment_vectors_xy
         )
