@@ -1,0 +1,13 @@
+1. TrackQueryUtils
+2. Observation vector
+3. reward function
+4. reset/termination logic
+
+- Create query_utils.py
+- Test it using your existing centreline and a fake car position
+- Draw/debug:
+  - nearest point
+  - lookahead point
+  - progress value
+  - lateral error
+- Only then plug it into the Gym environment
