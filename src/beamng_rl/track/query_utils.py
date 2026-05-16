@@ -561,7 +561,18 @@ if __name__ == "__main__":
     # Fake a vehicle position by taking a known centreline point and nudging it
     # in XY. A real environment would pass the BeamNG vehicle position here.
     fake_vehicle_position = track.points_xyz[25] + np.array([1.5, -0.75, 0.0])
-    result = track.query(fake_vehicle_position)
+
+    # First query: get the local centreline heading.
+    base_result = track.query(fake_vehicle_position)
+
+    # Fake the car pointing slightly away from the track direction.
+    fake_vehicle_heading_rad = base_result.track_heading_rad + 0.2
+
+    # Second query: test the full query path, including heading error.
+    result = track.query(
+        fake_vehicle_position,
+        vehicle_heading_rad=fake_vehicle_heading_rad,
+    )
 
     lookahead = track.lookahead_point(result.lap_progress, lookahead_m=20.0)
     curvature = track.curvature_at(result.lap_progress)
@@ -573,5 +584,7 @@ if __name__ == "__main__":
     print(f"Progress ratio: {result.lap_progress_ratio:.4f}")
     print(f"Signed lateral error: {result.signed_lateral_error:.3f} m")
     print(f"Track heading: {result.track_heading_rad:.3f} rad")
+    print(f"Vehicle heading: {fake_vehicle_heading_rad:.3f} rad")
+    print(f"Heading error: {result.heading_error_rad:.3f} rad")
     print(f"Lookahead point XYZ: {np.array2string(lookahead, precision=3)}")
     print(f"Curvature: {curvature:.6f} 1/m")
