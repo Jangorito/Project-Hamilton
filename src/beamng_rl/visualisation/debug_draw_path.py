@@ -18,7 +18,7 @@ Float3 = Tuple[float, float, float]
 Color = Tuple[float, float, float, float]
 
 
-@dataclass(slots=True)
+@dataclass
 class DebugPathHandles:
     """Stores BeamNG debug-object IDs so they can be removed later."""
 
@@ -102,7 +102,7 @@ class DebugPathDrawer:
         if start_end_markers:
             endpoints = [pts[0], pts[-1]]
             endpoint_colors = [(0.0, 1.0, 0.0, 1.0), (1.0, 0.0, 0.0, 1.0)]
-            for point, color in zip(endpoints, endpoint_colors, strict=True):
+            for point, color in zip(endpoints, endpoint_colors):
                 if point not in marker_points:
                     marker_points.append(point)
                     marker_radii.append(sphere_radius * 1.4)
