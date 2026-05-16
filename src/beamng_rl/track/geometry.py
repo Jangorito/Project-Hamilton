@@ -1,7 +1,9 @@
-# src/RL/track/geometry.py
+# src/beamng_rl/track/geometry.py
 from __future__ import annotations
 
-Float3 = tuple[float, float, float]
+from typing import Tuple
+
+Float3 = Tuple[float, float, float]
 
 def resample_polyline(points: list[Float3], spacing: float) -> list[Float3]:
     """

@@ -1,4 +1,4 @@
-# src/RL/visualisation/debug_draw_path.py
+# src/beamng_rl/visualisation/debug_draw_path.py
 from __future__ import annotations
 
 import argparse
@@ -6,7 +6,7 @@ import csv
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Tuple
 
 try:
     import numpy as np
@@ -14,8 +14,8 @@ except ImportError:  # pragma: no cover - optional dependency
     np = None
 
 
-Float3 = tuple[float, float, float]
-Color = tuple[float, float, float, float]
+Float3 = Tuple[float, float, float]
+Color = Tuple[float, float, float, float]
 
 
 @dataclass(slots=True)

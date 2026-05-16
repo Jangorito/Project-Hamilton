@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib import colors as mcolors
 from matplotlib.lines import Line2D
 
-from RL.track.raceline_loader import (
+from beamng_rl.track.raceline_loader import (
     load_race_path,
     load_items_lines,
     build_sequential_chain,

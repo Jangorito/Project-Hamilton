@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Tuple
 
 from beamngpy import BeamNGpy, Scenario, Vehicle, set_up_simple_logging
 
-from RL.track.geometry import resample_polyline
-from RL.track.raceline_loader import derive_race_path_from_files
-from RL.visualisation.debug_draw_path import DebugPathDrawer
+from beamng_rl.track.geometry import resample_polyline
+from beamng_rl.track.raceline_loader import derive_race_path_from_files
+from beamng_rl.visualisation.debug_draw_path import DebugPathDrawer
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ HIGHLIGHT_IDS = [30, 12, 10, 17]
 # ---------------------------------------------------------------------------
 # Track helpers
 # ---------------------------------------------------------------------------
-Float3 = tuple[float, float, float]
+Float3 = Tuple[float, float, float]
 
 
 def derive_path() -> list[Float3]:
@@ -188,11 +189,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\venv\Scripts\Activate.ps1
 
     default 2m resampling:
-python -m RL.bootstrap.beamng_bootstrap --draw-path
+python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path
 
     Without resampling:
-python -m RL.bootstrap.beamng_bootstrap --draw-path --resample-spacing 0
+python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path --resample-spacing 0
 
     With denser debug spheres:
-python -m RL.bootstrap.beamng_bootstrap --draw-path --sphere-every 10
+python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path --sphere-every 10
 """

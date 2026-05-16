@@ -1,11 +1,12 @@
-# src/RL/track/raceline_loader.py
+# src/beamng_rl/track/raceline_loader.py
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Tuple
 
-Float3 = tuple[float, float, float]
+Float3 = Tuple[float, float, float]
 
 
 def load_race_path(race_file: Path):
