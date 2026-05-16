@@ -42,6 +42,12 @@ Launch the Student-machine shadow-disabling smoke test:
 python -m beamng_rl.bootstrap.beamng_bootstrap --disable-shadows
 ```
 
+Launch the Student-machine editable low-graphics preset:
+
+```powershell
+python -m beamng_rl.bootstrap.beamng_bootstrap --low-graphics
+```
+
 Launch it with the derived Hirochi race path drawn in BeamNG:
 
 ```powershell
@@ -85,6 +91,26 @@ the Student install. The bootstrap uses BeamNG's graphics settings API key
 `GraphicDisableShadows`, which the local BeamNG Lua maps to
 `$pref::Shadows::disable`; if BeamNGpy rejects it, the command prints a warning
 and continues.
+
+To apply a broader editable low-graphics preset:
+
+```powershell
+python -m beamng_rl.bootstrap.beamng_bootstrap --low-graphics
+```
+
+The preset is stored in:
+
+```text
+config\beamng_low_graphics.ini
+```
+
+That file is intentionally commented and ordered by expected hardware impact.
+Edit values there, then relaunch with `--low-graphics`. To test a different
+file without replacing the default:
+
+```powershell
+python -m beamng_rl.bootstrap.beamng_bootstrap --low-graphics --low-graphics-settings-file "config\beamng_low_graphics.ini"
+```
 
 The default track-data directory on this machine is:
 

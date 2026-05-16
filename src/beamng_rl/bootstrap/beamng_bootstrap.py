@@ -8,6 +8,11 @@ from typing import Tuple
 
 from beamngpy import BeamNGpy, Scenario, Vehicle, set_up_simple_logging
 
+from beamng_rl.bootstrap.graphics_settings import (
+    DEFAULT_LOW_GRAPHICS_SETTINGS_FILE,
+    apply_graphics_settings,
+    load_graphics_settings,
+)
 from beamng_rl.track.geometry import resample_polyline
 from beamng_rl.track.raceline_loader import derive_race_path_from_files
 from beamng_rl.visualisation.debug_draw_path import DebugPathDrawer
@@ -138,6 +143,23 @@ def apply_shadow_disabling(bng: BeamNGpy) -> bool:
     return True
 
 
+def apply_low_graphics_preset(bng: BeamNGpy, settings_file: Path) -> bool:
+    """
+    Apply the editable low-graphics preset.
+
+    The preset lives outside the Python code so we can tune it by editing
+    comments and values in one place while keeping the bootstrap logic stable.
+    """
+    try:
+        settings = load_graphics_settings(settings_file)
+    except Exception as exc:
+        print(f"WARNING: Could not load low-graphics settings from {settings_file}: {exc!r}")
+        return False
+
+    print(f"Applying low-graphics settings from: {settings_file}")
+    return apply_graphics_settings(bng, settings, label="low graphics")
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="BeamNG SBR4 bootstrap")
 
@@ -170,6 +192,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Student-machine smoke-test flag: after BeamNG starts, ask BeamNGpy "
             "to set GraphicDisableShadows to 2 and apply graphics settings."
+        ),
+    )
+    parser.add_argument(
+        "--low-graphics",
+        action="store_true",
+        help=(
+            "Student-machine flag: apply the editable low-graphics settings "
+            "file after BeamNG starts."
+        ),
+    )
+    parser.add_argument(
+        "--low-graphics-settings-file",
+        type=Path,
+        default=DEFAULT_LOW_GRAPHICS_SETTINGS_FILE,
+        help=(
+            "INI file containing ordered low-graphics settings for --low-graphics "
+            f"(default: {DEFAULT_LOW_GRAPHICS_SETTINGS_FILE})."
         ),
     )
     parser.add_argument(
@@ -269,6 +308,16 @@ def main() -> None:
 
     try:
         bng.open(launch=True)
+
+        if args.low_graphics:
+            if is_student_beamng_home(beamng_home):
+                apply_low_graphics_preset(bng, args.low_graphics_settings_file)
+            else:
+                print(
+                    "WARNING: --low-graphics is currently limited to the "
+                    f"Student BeamNG install ({STUDENT_BEAMNG_HOME}). "
+                    f"Resolved BeamNG home was {beamng_home}; leaving graphics unchanged."
+                )
 
         if args.disable_shadows:
             if is_student_beamng_home(beamng_home):
