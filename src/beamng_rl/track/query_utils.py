@@ -50,6 +50,7 @@ class TrackQueryResult:
     lap_progress_ratio: float
     track_heading_rad: float
     track_tangent_xy: np.ndarray    # road direction as an [x, y] arrow
+    heading_error_rad: float | None = None
 
 
 def heading_error(vehicle_heading_rad: float, track_heading_rad: float) -> float:
@@ -236,35 +237,38 @@ class TrackCentreline:
             segment_start_to_vehicle, self.segment_vectors_xy) / segment_length_sq
         segment_progression_projection = np.clip(raw_segment_progression_projection, 0.0, 1.0)
 
-        # TODO: add comments from here onwards...(15. query())
+        # calculating a candidate nearest point for each segment
         nearest_points_xy = (
             self.segment_start_points_xy + segment_progression_projection[:, None] * self.segment_vectors_xy
         )
+        # calculates vector offset between each candidate nearest point and the vehicle
         vehicle_offsets_xy = vehicle_xy[None, :] - nearest_points_xy
+        # squared distance of vector offsets
         distance_sq = np.einsum("ij,ij->i", vehicle_offsets_xy, vehicle_offsets_xy)
-
+        # store appropriate segment (the one with the smallest distance)
         best_segment_index = int(np.argmin(distance_sq))
-        segment_t = float(segment_progression_projection[best_segment_index])
-
+        # get progression value for best segment
+        segment_progression = float(segment_progression_projection[best_segment_index])
+        # xy value of point
         nearest_point_xy = nearest_points_xy[best_segment_index].copy()
+        # nearest point in XYZ
         nearest_point_xyz = (
             self.segment_start_points_xyz[best_segment_index]
-            + segment_t * self.segment_vectors_xyz[best_segment_index]
+            + segment_progression * self.segment_vectors_xyz[best_segment_index]
         )
 
+        # squared distance -> real distance
         distance_to_centerline = float(math.sqrt(float(distance_sq[best_segment_index])))
 
+
+        # track direction at target segment
         tangent_xy = self.segment_track_direction_xy[best_segment_index].copy()
+        # centreline -> vehicle offset (vector)
         vehicle_offset_xy = vehicle_xy - nearest_point_xy
 
         # Signed lateral error uses the 2D cross product:
         #   tangent_x * offset_y - tangent_y * offset_x
-        # Because tangent_xy has unit length, the result is the perpendicular
-        # distance from the centreline tangent to the vehicle. Positive means
-        # the vehicle is to the left of the ordered track direction; negative
-        # means it is to the right. Near segment endpoints, this signed value
-        # describes side-of-track, while distance_to_centerline is still the
-        # true Euclidean distance to the nearest centreline point.
+        # How far is the car sideways from the track centreline, and is it on the left or right side of the road?
         signed_lateral_error = float(
             tangent_xy[0] * vehicle_offset_xy[1] - tangent_xy[1] * vehicle_offset_xy[0]
         )
@@ -273,44 +277,41 @@ class TrackCentreline:
         # the current segment reached by the projection. For a closed lap we
         # wrap total_length back to 0, so progress always means "where am I on
         # this lap?" rather than "how many metres have I ever driven?".
-        raw_progress_m = (
-            float(self.segment_start_progress_m[best_segment_index])
-            + segment_t * float(self.segment_lengths[best_segment_index])
-        )
-        progress_m = self._normalise_progress(raw_progress_m)
-        progress_ratio = progress_m / self.total_lap_length
 
+        # Compute lap progress in metres and as a ratio of total lap length
+        raw_segment_progress = (
+            float(self.segment_start_progress_m[best_segment_index])
+            + segment_progression * float(self.segment_lengths[best_segment_index])
+        )
+
+        lap_progress_in_metres = self._normalise_progress(raw_segment_progress)
+        lap_progress_ratio = lap_progress_in_metres / self.total_lap_length
+
+        # Track heading - angle of the track tangent vector at the nearest point
         track_heading_rad = float(math.atan2(tangent_xy[1], tangent_xy[0]))
 
+        # compute heading error if vehicle heading is provided (Comparing the car's heading with the track's heading)
+        heading_error_rad = None
         if vehicle_heading_rad is not None:
-            # Validate the optional heading and make the intended companion API
-            # obvious. The result dataclass stays focused on track geometry;
-            # environments can compute this only when they actually need it:
-            #   heading_error(vehicle_heading, result.track_heading_rad)
-            heading_error(vehicle_heading_rad, track_heading_rad)
+            heading_error_rad = heading_error(vehicle_heading_rad, track_heading_rad)
 
         return TrackQueryResult(
             nearest_point_xyz=nearest_point_xyz.copy(),
             nearest_point_xy=nearest_point_xy,
             segment_index=best_segment_index,
-            segment_progress=segment_t,
+            segment_progress=segment_progression,
             distance_to_centerline=distance_to_centerline,
             signed_lateral_error=signed_lateral_error,
-            lap_progress=progress_m,
-            lap_progress_ratio=progress_ratio,
+            lap_progress=lap_progress_in_metres,
+            lap_progress_ratio=lap_progress_ratio,
             track_heading_rad=track_heading_rad,
+            heading_error_rad=heading_error_rad,
             track_tangent_xy=tangent_xy,
         )
 
     def point_at_progress(self, progress_m: float) -> np.ndarray:
-        """Interpolate an XYZ centreline point at a lap progress distance.
-
-        For closed tracks, progress wraps with modulo total length. For example,
-        asking for total_length + 10 m returns the point 10 m after the start.
-        This is what makes lookahead work smoothly across the start/finish line.
-
-        For open tracks, progress clamps to the available range so callers get
-        the first or final point instead of an out-of-bounds error.
+        """
+        Return a centreline point at given progress (distance) along the lap.
         """
 
         progress = self._normalise_progress(progress_m)
@@ -318,6 +319,7 @@ class TrackCentreline:
         segment_start_progress = float(self.cumulative_arc_lengths[segment_index])
         segment_length = float(self.segment_lengths[segment_index])
 
+        # Calculate how far along the segment the progress is, as a fraction between 0 and 1
         segment_t = (progress - segment_start_progress) / segment_length
         segment_t = float(np.clip(segment_t, 0.0, 1.0))
 
@@ -327,11 +329,11 @@ class TrackCentreline:
         ).copy()
 
     def lookahead_point(self, progress_m: float, lookahead_m: float) -> np.ndarray:
-        """Return an XYZ point ``lookahead_m`` metres after ``progress_m``.
+        """Returns an XYZ point ``lookahead_m`` metres after ``progress_m``.
 
         On a closed loop this simply adds the lookahead distance and lets
         :meth:`point_at_progress` wrap around modulo lap length. That means a
-        policy near the end of the lap can request, say, a 20 m lookahead and
+        policy near the end of the lap could request a 20 m lookahead and
         receive a point just after the start/finish line instead of falling off
         the end of the array.
         """
@@ -343,18 +345,17 @@ class TrackCentreline:
         return self.point_at_progress(float(progress_m) + lookahead)
 
     def curvature_at(self, progress_m: float, sample_distance_m: float = 5.0) -> float:
-        """Estimate unsigned XY curvature near ``progress_m``.
+        """Estimates how curved the track is near a ``progress_m`` point.
 
         We sample three centreline points: one before the progress, one at the
-        progress, and one after it. Those three points define a triangle. If the
+        progress, and one after it. This defines a triangle. If the
         triangle has a stable, non-zero area, the circumcircle through the
         points approximates the local path curve, and curvature is 1/radius:
 
             curvature = 4 * triangle_area / (side_a * side_b * side_c)
+            ----------------------------------------------------------
 
-        Straight or nearly straight samples have almost zero triangle area, and
-        duplicate/clamped samples at open-track ends can make side lengths
-        degenerate. In those cases the safest curvature estimate is 0.0.
+        Straight (or nearly) straight samples have almost zero triangle area
         """
 
         sample_distance = float(sample_distance_m)
@@ -363,14 +364,17 @@ class TrackCentreline:
                 f"sample_distance_m must be a positive finite value, got {sample_distance_m!r}"
             )
 
+        # sample 3 centreline points, one behind, one at, and one ahead of the target progress
         prev_xy = self.point_at_progress(float(progress_m) - sample_distance)[:2]
         curr_xy = self.point_at_progress(progress_m)[:2]
         next_xy = self.point_at_progress(float(progress_m) + sample_distance)[:2]
 
+        # derive side lengths of the triangle formed by the three points
         side_a = float(np.linalg.norm(curr_xy - prev_xy))
         side_b = float(np.linalg.norm(next_xy - curr_xy))
         side_c = float(np.linalg.norm(next_xy - prev_xy))
 
+        # if any side is too small, curvature is 0
         if (
             side_a <= _MIN_SEGMENT_LENGTH_M
             or side_b <= _MIN_SEGMENT_LENGTH_M
@@ -378,17 +382,21 @@ class TrackCentreline:
         ):
             return 0.0
 
+        # create vectors for the triangle sides 
         vec_ab = curr_xy - prev_xy
         vec_ac = next_xy - prev_xy
+        # 
         twice_area = abs(float(vec_ab[0] * vec_ac[1] - vec_ab[1] * vec_ac[0]))
 
         if twice_area <= _MIN_SEGMENT_LENGTH_M:
             return 0.0
-
+        # the product of the side lengths is in the denominator of the curvature formula
+        #  if it's too small, return 0 to avoid dividing by zero
         denominator = side_a * side_b * side_c
         if denominator <= _MIN_SEGMENT_LENGTH_M:
             return 0.0
 
+        # curvature is 4 times the triangle area divided by the product of the side lengths
         curvature = 2.0 * twice_area / denominator
         if not math.isfinite(curvature) or curvature <= _MIN_SEGMENT_LENGTH_M:
             return 0.0
@@ -396,7 +404,7 @@ class TrackCentreline:
         return float(curvature)
 
     def _normalise_progress(self, progress_m: float) -> float:
-        """Wrap or clamp a progress value according to track topology."""
+        """Wrap or clamp a progress value according to closed or open loop track."""
 
         progress = float(progress_m)
         if not math.isfinite(progress):
@@ -408,12 +416,13 @@ class TrackCentreline:
         return float(np.clip(progress, 0.0, self.total_lap_length))
 
     def _segment_index_at_progress(self, progress_m: float) -> int:
-        """Find the segment containing a normalised progress value."""
+        """Find segment with normalised progress value."""
 
         segment_index = int(np.searchsorted(self.cumulative_arc_lengths, progress_m, side="right") - 1)
         return int(np.clip(segment_index, 0, self.segment_count - 1))
 
     def _validate_segment_lengths(self) -> None:
+        """Finds all zero-length or invalid segments."""
         bad_indices = np.flatnonzero(self.segment_lengths <= _MIN_SEGMENT_LENGTH_M)
         if bad_indices.size == 0:
             return
@@ -430,6 +439,7 @@ class TrackCentreline:
 
     @staticmethod
     def json_points_to_NumPy_array(points_xyz: np.ndarray | Sequence[Sequence[float]]) -> np.ndarray:
+        """Converts input points into a NumPy array of floats."""
         points = np.asarray(points_xyz, dtype=float)
 
         if points.ndim != 2 or points.shape[1] != 3:
@@ -454,6 +464,7 @@ class TrackCentreline:
 
     @staticmethod
     def _coerce_position_xy(position_xyz: Sequence[float] | np.ndarray) -> np.ndarray:
+        """Turns the vehicle position into a flat NumPy array."""
         position = np.asarray(position_xyz, dtype=float).reshape(-1)
 
         if position.shape[0] not in (2, 3):
@@ -468,6 +479,7 @@ class TrackCentreline:
 
     @staticmethod
     def _points_from_json(points_json: Any, *, source_path: Path) -> np.ndarray:
+        """Converts the raw JSON point list into a NumPy array."""
         if not isinstance(points_json, Sequence) or isinstance(points_json, (str, bytes)):
             raise ValueError(f"{source_path} key 'points' must be a list of point objects")
 
@@ -506,6 +518,7 @@ class TrackCentreline:
 
     @staticmethod
     def _positive_float_or_none(value: Any) -> float | None:
+        """Converts a value to a positive float, or returns None."""
         try:
             number = float(value)
         except (TypeError, ValueError):
@@ -517,7 +530,7 @@ class TrackCentreline:
 
     @staticmethod
     def _duplicate_endpoint_threshold(points_xyz: np.ndarray, spacing_m: float | None) -> float:
-        """Choose a practical XY threshold for removing a duplicate endpoint."""
+        """Choose a practical distance threshold for duplicate endpoint removal."""
 
         if spacing_m is not None:
             # The resampled file says points are about spacing_m apart, so a
