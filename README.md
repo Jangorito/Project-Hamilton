@@ -36,6 +36,12 @@ Launch the current BeamNG bootstrap:
 python -m beamng_rl.bootstrap.beamng_bootstrap
 ```
 
+Launch the Student-machine shadow-disabling smoke test:
+
+```powershell
+python -m beamng_rl.bootstrap.beamng_bootstrap --disable-shadows
+```
+
 Launch it with the derived Hirochi race path drawn in BeamNG:
 
 ```powershell
@@ -66,6 +72,19 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 $env:PYTHONPATH = "$PWD\src"
 python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path
 ```
+
+To test BeamNGpy graphics preferences without starting an RL training run, launch
+the bootstrap with shadows disabled:
+
+```powershell
+python -m beamng_rl.bootstrap.beamng_bootstrap --disable-shadows
+```
+
+This currently only attempts `$pref::Shadows::disable = 2` through BeamNGpy on
+the Student install. The bootstrap uses BeamNG's graphics settings API key
+`GraphicDisableShadows`, which the local BeamNG Lua maps to
+`$pref::Shadows::disable`; if BeamNGpy rejects it, the command prints a warning
+and continues.
 
 The default track-data directory on this machine is:
 

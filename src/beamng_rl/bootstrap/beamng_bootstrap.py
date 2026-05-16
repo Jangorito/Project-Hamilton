@@ -36,6 +36,16 @@ SPAWN_ROT = (-0.0001524259429, 0.0005056571858, -0.2886135897, 0.9574455164)
 
 HIGHLIGHT_IDS = [30, 12, 10, 17]
 
+# First, deliberately tiny graphics-setting probe. BeamNG's default
+# game-settings file lists this as:
+#   $pref::Shadows::disable = 0; // 0 = None, 1 = Partial, 2 = All
+# BeamNGpy routes settings changes through BeamNG's Lua settings.setValue().
+# The graphics option key that maps to "$pref::Shadows::disable" is
+# "GraphicDisableShadows"; using "Shadows::disable" is accepted but only stores
+# an inert settings value, so it does not visibly change shadows.
+SHADOWS_DISABLE_SETTING_KEY = "GraphicDisableShadows"
+SHADOWS_DISABLE_ALL = "2"
+
 
 # ---------------------------------------------------------------------------
 # Track helpers
@@ -96,6 +106,38 @@ def build_scenario(bng: BeamNGpy) -> tuple[Scenario, Vehicle]:
     return scenario, vehicle
 
 
+def is_student_beamng_home(beamng_home: Path) -> bool:
+    """Return whether the selected install is the Student-machine BeamNG path."""
+    return os.path.normcase(str(beamng_home.resolve(strict=False))) == os.path.normcase(
+        str(STUDENT_BEAMNG_HOME.resolve(strict=False))
+    )
+
+
+def apply_shadow_disabling(bng: BeamNGpy) -> bool:
+    """
+    Try the first API-based low-graphics setting.
+
+    This intentionally changes only shadows for now. If this BeamNGpy setting
+    call works reliably, we can later add a fuller low-graphics preset without
+    editing BeamNG's default settings file directly.
+    """
+    try:
+        bng.settings.change(SHADOWS_DISABLE_SETTING_KEY, SHADOWS_DISABLE_ALL)
+        bng.settings.apply_graphics()
+    except Exception as exc:
+        print(
+            "WARNING: Could not apply BeamNG shadow-disabling setting "
+            f"{SHADOWS_DISABLE_SETTING_KEY}={SHADOWS_DISABLE_ALL}: {exc!r}"
+        )
+        return False
+
+    print(
+        "Applied BeamNG shadow-disabling setting "
+        f"{SHADOWS_DISABLE_SETTING_KEY}={SHADOWS_DISABLE_ALL}."
+    )
+    return True
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="BeamNG SBR4 bootstrap")
 
@@ -121,6 +163,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--draw-path",
         action="store_true",
         help="Derive and draw the race path in-sim using debug primitives.",
+    )
+    parser.add_argument(
+        "--disable-shadows",
+        action="store_true",
+        help=(
+            "Student-machine smoke-test flag: after BeamNG starts, ask BeamNGpy "
+            "to set GraphicDisableShadows to 2 and apply graphics settings."
+        ),
     )
     parser.add_argument(
         "--sphere-every",
@@ -219,6 +269,16 @@ def main() -> None:
 
     try:
         bng.open(launch=True)
+
+        if args.disable_shadows:
+            if is_student_beamng_home(beamng_home):
+                apply_shadow_disabling(bng)
+            else:
+                print(
+                    "WARNING: --disable-shadows is currently limited to the "
+                    f"Student BeamNG install ({STUDENT_BEAMNG_HOME}). "
+                    f"Resolved BeamNG home was {beamng_home}; leaving graphics unchanged."
+                )
 
         scenario, vehicle = build_scenario(bng)
 
