@@ -15,6 +15,7 @@ reward =
     - off_track_penalty_if_applicable
     - reverse_progress_penalty_if_applicable
     - stuck_penalty_if_applicable
+    - progress_jump_penalty_if_applicable
 ```
 
 ## Components
@@ -28,6 +29,7 @@ reward =
 | Excessive lateral error/off-track penalty | `max_lateral_error_m = 8.0`, `off_track_penalty = 10.0` | Make likely off-track states visibly bad in reward logs. | Formula RL discusses out-of-track termination; GT Sport adds penalties for wall exploitation. | Needs replacing or strengthening with true road-boundary and collision signals. |
 | Reverse progress penalty | `reverse_progress_penalty = 2.0` | Penalise meaningful movement against lap direction. | Formula RL discusses terminating backwards movement. | Termination is conservative for now; thresholding may be needed later. |
 | Stuck/no-progress penalty | `min_progress_delta_m = 0.05`, `stuck_step_penalty = 0.05` | Discourage stationary or barely moving behaviour before stuck termination. | Formula RL discusses slow-progress and max-step termination. | Needs tuning with the final simulator step rate and action repeat. |
+| Progress projection guard | `max_progress_delta_m = 50.0`, `progress_jump_penalty = 5.0` | Ignore one-frame centreline projection jumps that are too large to be real vehicle movement. | Defensive live-simulator guard. | Threshold may need tuning for other tracks or action repeat settings. |
 
 ## Design Rationale
 
@@ -36,6 +38,10 @@ Progress is the main signal because it approximates lap-time minimisation while 
 ## Progress Origin Note
 
 The live BeamNG spawn uses a hand-verified bootstrap pose near the painted start/finish marker. The centreline JSON raw progress at this pose may be near the wrap boundary rather than zero, so training should use episode-relative progress and progress deltas instead of assuming raw `progress_ratio` starts at zero. Lap completion should eventually be based on accumulated `episode_progress_m`.
+
+## Progress projection guard
+
+BeamNG live positions are projected onto a closed centreline. Near complex track geometry, nearest-point projection may occasionally jump to a distant part of the loop for one frame. Impossible progress deltas are detected after normal wrap handling, ignored for reward and episode progress, and given a small explicit penalty. This prevents one-frame projection artefacts from dominating training logs or PPO reward updates.
 
 ## Known Limitations
 
@@ -69,3 +75,5 @@ The live BeamNG spawn uses a hand-verified bootstrap pose near the painted start
 | `min_progress_delta_m` | `0.05` | Threshold for no-progress/stuck detection. |
 | `stuck_step_penalty` | `0.05` | Applied on steps below `min_progress_delta_m`. |
 | `stuck_steps_limit` | `100` | Terminates after repeated low-progress steps. |
+| `max_progress_delta_m` | `50.0` | Maximum allowed per-step progress delta after wrap handling. |
+| `progress_jump_penalty` | `5.0` | Applied when an impossible centreline projection jump is detected. |

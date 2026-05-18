@@ -102,6 +102,8 @@ class BeamNGRacingEnv(gym.Env):
         max_lateral_error_m: float = 8.0,
         stuck_steps_limit: int = 100,
         min_progress_delta_m: float = 0.05,
+        max_progress_delta_m: float = 50.0,
+        progress_jump_penalty: float = 5.0,
         render_mode: str | None = None,
         reward_config: RewardConfig | None = None,
         use_mock: bool = True,
@@ -160,6 +162,8 @@ class BeamNGRacingEnv(gym.Env):
         self.max_lateral_error_m = float(max_lateral_error_m)
         self.stuck_steps_limit = int(stuck_steps_limit)
         self.min_progress_delta_m = float(min_progress_delta_m)
+        self.max_progress_delta_m = float(max_progress_delta_m)
+        self.progress_jump_penalty = float(progress_jump_penalty)
         self.render_mode = render_mode
         self.reward_config = reward_config or RewardConfig()
 
@@ -357,6 +361,7 @@ class BeamNGRacingEnv(gym.Env):
                 else 0.0
             ),
             "stuck_steps": self.stuck_steps,
+            "progress_jump_detected": reward_info["progress_jump_detected"],
             "termination_reason": termination.reason,
             "termination": {
                 "off_track": termination.off_track,
@@ -436,7 +441,7 @@ class BeamNGRacingEnv(gym.Env):
         self,
         query_result: TrackQueryResult,
         vehicle_state: dict[str, Any],
-    ) -> tuple[float, dict[str, float]]:
+    ) -> tuple[float, dict[str, Any]]:
         """Compute the first dense, inspectable racing reward.
 
         The reward uses raw centreline progress delta as the main signal, then
@@ -455,6 +460,11 @@ class BeamNGRacingEnv(gym.Env):
         # delta into the small positive distance actually travelled.
         if progress_delta_m < -0.5 * total_lap_length:
             progress_delta_m += total_lap_length
+
+        original_progress_delta_m = progress_delta_m
+        progress_jump_detected = abs(progress_delta_m) > self.max_progress_delta_m
+        if progress_jump_detected:
+            progress_delta_m = 0.0
 
         progress_reward = progress_delta_m * config.progress_weight
 
@@ -483,6 +493,10 @@ class BeamNGRacingEnv(gym.Env):
         if progress_delta_m < self.min_progress_delta_m:
             stuck_penalty = config.stuck_step_penalty
 
+        progress_jump_penalty_value = (
+            self.progress_jump_penalty if progress_jump_detected else 0.0
+        )
+
         reward = (
             progress_reward
             + speed_reward
@@ -491,6 +505,7 @@ class BeamNGRacingEnv(gym.Env):
             - off_track_penalty
             - reverse_progress_penalty
             - stuck_penalty
+            - progress_jump_penalty_value
         )
 
         reward_info = {
@@ -498,6 +513,9 @@ class BeamNGRacingEnv(gym.Env):
             "episode_start_progress_m": float(self.episode_start_progress_m),
             "episode_progress_m": float(self.episode_progress_m + progress_delta_m),
             "progress_delta_m": float(progress_delta_m),
+            "progress_jump_detected": bool(progress_jump_detected),
+            "original_progress_delta_m": float(original_progress_delta_m),
+            "max_progress_delta_m": float(self.max_progress_delta_m),
             "progress_reward": float(progress_reward),
             "forward_speed_mps": float(forward_speed_mps),
             "speed_reward": float(speed_reward),
@@ -508,6 +526,7 @@ class BeamNGRacingEnv(gym.Env):
             "off_track_penalty": float(off_track_penalty),
             "reverse_progress_penalty": float(reverse_progress_penalty),
             "stuck_penalty": float(stuck_penalty),
+            "progress_jump_penalty": float(progress_jump_penalty_value),
             "total_reward": float(reward),
         }
         return float(reward), reward_info

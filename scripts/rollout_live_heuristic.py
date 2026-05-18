@@ -44,6 +44,9 @@ CSV_FIELDS = [
     "terminated",
     "truncated",
     "termination_reason",
+    "progress_jump_detected",
+    "original_progress_delta_m",
+    "progress_jump_penalty",
 ]
 
 
@@ -73,25 +76,52 @@ def heuristic_action(
     info: dict[str, Any],
     previous_action: np.ndarray | None,
 ) -> np.ndarray:
-    """Return a simple diagnostic control action from the latest env info."""
+    """Return a diagnostic baseline control action from the latest env info."""
 
     lateral_error_m = _info_float(info, "lateral_error_m")
     heading_error_rad = _info_float(info, "heading_error_rad")
     forward_speed_mps = _reward_float(info, "forward_speed_mps")
 
-    # This remains a diagnostic heuristic, not the final controller.
+    # This remains a diagnostic baseline, not the learned RL policy.
     # The live sign sweep selected positive heading plus positive lateral
     # correction; pos_heading_pos_lateral was the only case to avoid off-track.
     steering = (0.7 * heading_error_rad) + (0.05 * lateral_error_m)
+
+    # Keep speed high when the car is stable, but add mild steering authority
+    # as speed and lateral error rise so growing risk is corrected earlier.
+    if forward_speed_mps > 28.0:
+        steering *= 1.15
+
+    if abs(lateral_error_m) > 4.0:
+        steering *= 1.25
+
     steering = float(np.clip(steering, -1.0, 1.0))
 
-    if abs(heading_error_rad) > 0.5 or abs(lateral_error_m) > 6.0:
-        throttle_brake = 0.1
-    else:
-        throttle_brake = 0.25
+    # Avoid a low fixed speed cap: accelerate/coast on stable sections, then
+    # slow down when lateral/heading error indicates loss of control risk.
+    # This targets the previous high-speed off-track failure mode without
+    # treating high speed itself as the problem.
+    risk = abs(lateral_error_m) + 6.0 * abs(heading_error_rad)
 
-    # Reserved for quick follow-up experiments such as speed caps or smoothing.
-    _ = previous_action, forward_speed_mps
+    if forward_speed_mps < 28.0:
+        throttle_brake = 0.30
+    elif forward_speed_mps < 34.0:
+        throttle_brake = 0.10
+    else:
+        throttle_brake = 0.0
+
+    if risk > 4.0:
+        throttle_brake = min(throttle_brake, 0.0)
+
+    if risk > 6.0:
+        throttle_brake = -0.20
+
+    if risk > 8.0:
+        throttle_brake = -0.45
+
+    throttle_brake = float(np.clip(throttle_brake, -1.0, 1.0))
+
+    _ = previous_action
 
     return np.asarray([steering, throttle_brake], dtype=np.float32)
 
@@ -126,6 +156,19 @@ def _build_csv_row(
         "terminated": terminated,
         "truncated": truncated,
         "termination_reason": str(info.get("termination_reason", "none")),
+        "progress_jump_detected": bool(
+            reward_info.get(
+                "progress_jump_detected",
+                info.get("progress_jump_detected", False),
+            )
+        ),
+        "original_progress_delta_m": _float_or_default(
+            reward_info.get("original_progress_delta_m"),
+            _float_or_default(reward_info.get("progress_delta_m")),
+        ),
+        "progress_jump_penalty": _float_or_default(
+            reward_info.get("progress_jump_penalty")
+        ),
     }
 
 
@@ -136,6 +179,7 @@ def _print_step(row: Mapping[str, Any]) -> None:
         f"action_throttle_brake={row['action_throttle_brake']:.3f} "
         f"episode_progress_m={row['episode_progress_m']:.3f} "
         f"progress_delta_m={row['progress_delta_m']:.4f} "
+        f"progress_jump_detected={row['progress_jump_detected']} "
         f"forward_speed_mps={row['forward_speed_mps']:.3f} "
         f"lateral_error_m={row['lateral_error_m']:.3f} "
         f"heading_error_rad={row['heading_error_rad']:.4f} "
@@ -180,6 +224,7 @@ def main() -> None:
         final_lateral_error_m = _info_float(latest_info, "lateral_error_m")
         final_heading_error_rad = _info_float(latest_info, "heading_error_rad")
         max_forward_speed_mps = 0.0
+        progress_jump_count = 0
         final_termination_reason = "none"
         previous_action: np.ndarray | None = None
 
@@ -207,6 +252,8 @@ def main() -> None:
                 final_episode_progress_m = float(row["episode_progress_m"])
                 final_lateral_error_m = float(row["lateral_error_m"])
                 final_heading_error_rad = float(row["heading_error_rad"])
+                if row["progress_jump_detected"]:
+                    progress_jump_count += 1
                 max_forward_speed_mps = max(
                     max_forward_speed_mps,
                     float(row["forward_speed_mps"]),
@@ -225,6 +272,7 @@ def main() -> None:
         print("Summary:")
         print(f"CSV path: {csv_path}")
         print(f"total episode progress: {total_episode_progress_m:.3f} m")
+        print(f"progress jumps detected: {progress_jump_count}")
         print(f"max forward speed: {max_forward_speed_mps:.3f} m/s")
         print(f"final lateral error: {final_lateral_error_m:.3f} m")
         print(f"final heading error: {final_heading_error_rad:.4f} rad")
