@@ -50,6 +50,19 @@ class RewardConfig:
     stuck_step_penalty: float = 0.05
 
 
+@dataclass
+class TerminationResult:
+    """Inspectable outcome of the environment termination checks."""
+
+    terminated: bool
+    truncated: bool
+    reason: str
+    off_track: bool
+    stuck: bool
+    max_steps_reached: bool
+    lap_completed: bool = False
+
+
 class BeamNGRacingEnv(gym.Env):
     """A small continuous-control racing environment shell.
 
@@ -219,26 +232,12 @@ class BeamNGRacingEnv(gym.Env):
 
         self.current_step += 1
 
-        # Stuck detection is based on low progress over repeated steps. The
-        # reward function reports the per-step stuck penalty; this counter turns
-        # repeated low-progress behaviour into an episode termination.
-        if reward_info["progress_delta_m"] < self.min_progress_delta_m:
-            self.stuck_steps += 1
-        else:
-            self.stuck_steps = 0
-
-        off_track = abs(float(query.signed_lateral_error)) > self.max_lateral_error_m
-        stuck = self.stuck_steps >= self.stuck_steps_limit
-        terminated = bool(off_track or stuck)
-        truncated = bool(self.current_step >= self.max_episode_steps)
-
-        termination_reason = "none"
-        if off_track:
-            termination_reason = "off_track"
-        elif stuck:
-            termination_reason = "stuck"
-        elif truncated:
-            termination_reason = "max_episode_steps"
+        termination = self._check_termination(
+            query_result=query,
+            progress_delta_m=reward_info["progress_delta_m"],
+        )
+        terminated = termination.terminated
+        truncated = termination.truncated
 
         info: dict[str, Any] = {
             "step": self.current_step,
@@ -252,7 +251,13 @@ class BeamNGRacingEnv(gym.Env):
                 else 0.0
             ),
             "stuck_steps": self.stuck_steps,
-            "termination_reason": termination_reason,
+            "termination_reason": termination.reason,
+            "termination": {
+                "off_track": termination.off_track,
+                "stuck": termination.stuck,
+                "max_steps_reached": termination.max_steps_reached,
+                "lap_completed": termination.lap_completed,
+            },
             "mock_simulation": self.vehicle is None,
             "reward": reward_info,
         }
@@ -264,6 +269,52 @@ class BeamNGRacingEnv(gym.Env):
         self.last_info = info
 
         return observation, float(reward), terminated, truncated, info
+
+    def _check_termination(
+        self,
+        query_result: TrackQueryResult,
+        progress_delta_m: float,
+    ) -> TerminationResult:
+        """Update episode counters and report why an episode should end."""
+
+        # Stuck detection is based on low progress over repeated steps. The
+        # reward function reports the per-step stuck penalty; this counter turns
+        # repeated low-progress behaviour into an episode termination.
+        if progress_delta_m < self.min_progress_delta_m:
+            self.stuck_steps += 1
+        else:
+            self.stuck_steps = 0
+
+        off_track = abs(float(query_result.signed_lateral_error)) > self.max_lateral_error_m
+        stuck = self.stuck_steps >= self.stuck_steps_limit
+        max_steps_reached = self.current_step >= self.max_episode_steps
+
+        # TODO: Add lap completion once reset/progress wrapping is robust enough
+        # to distinguish a completed lap from start-line initialisation.
+        lap_completed = False
+
+        terminated = off_track or stuck or lap_completed
+        truncated = max_steps_reached
+
+        reason = "none"
+        if off_track:
+            reason = "off_track"
+        elif stuck:
+            reason = "stuck"
+        elif lap_completed:
+            reason = "lap_completed"
+        elif max_steps_reached:
+            reason = "max_episode_steps"
+
+        return TerminationResult(
+            terminated=bool(terminated),
+            truncated=bool(truncated),
+            reason=reason,
+            off_track=bool(off_track),
+            stuck=bool(stuck),
+            max_steps_reached=bool(max_steps_reached),
+            lap_completed=bool(lap_completed),
+        )
 
     def _compute_reward(
         self,
