@@ -7,6 +7,8 @@ build/
 dist/
 *.egg-info/
 game-settings-default.cs
+logs/
 models/*
+models/*.zip
 !models/.gitkeep
 models/.gitkeep
