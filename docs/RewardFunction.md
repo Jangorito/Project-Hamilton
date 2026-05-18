@@ -33,6 +33,10 @@ reward =
 
 Progress is the main signal because it approximates lap-time minimisation while remaining dense enough for learning. Speed is included but deliberately low-weighted because speed alone can encourage crashes, wall-riding, or poor brake usage. Heading alignment discourages sideways and backwards driving. Lateral error encourages stable track-following, but it must not permanently overconstrain the agent to the centreline because an optimal racing line may legitimately use more width. Off-track, reverse-progress, and stuck penalties make common failure modes explicit in logs and easier to debug.
 
+## Progress Origin Note
+
+The live BeamNG spawn uses a hand-verified bootstrap pose near the painted start/finish marker. The centreline JSON raw progress at this pose may be near the wrap boundary rather than zero, so training should use episode-relative progress and progress deltas instead of assuming raw `progress_ratio` starts at zero. Lap completion should eventually be based on accumulated `episode_progress_m`.
+
 ## Known Limitations
 
 - The centreline is not necessarily the optimal racing line.

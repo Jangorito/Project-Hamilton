@@ -2,9 +2,9 @@
 
 This module creates the Gymnasium-compatible wrapper around the track-query and
 observation-building code that already exists in the project. Mock mode remains
-the safe default for unit and smoke testing; live mode reuses the manual
-bootstrap's Hirochi/SBR setup so simulator experiments start from the same
-scenario, vehicle, and spawn pose.
+the safe default for unit and smoke testing; live mode uses the manual
+bootstrap's Hirochi/SBR setup and defaults to that known-good spawn pose while
+allowing centreline-aligned reset poses for RL experiments.
 """
 
 from __future__ import annotations
@@ -114,8 +114,19 @@ class BeamNGRacingEnv(gym.Env):
         scenario_name: str = "hirochi_raceway",
         vehicle_id: str = "ego_vehicle",
         steps_per_action: int = 3,
+        live_spawn_mode: str = "bootstrap",
+        live_spawn_progress_m: float = 0.0,
+        live_spawn_lateral_offset_m: float = 0.0,
+        live_spawn_z_offset_m: float = 0.5,
     ) -> None:
         super().__init__()
+
+        live_spawn_mode_value = str(live_spawn_mode)
+        if live_spawn_mode_value not in ("bootstrap", "centreline"):
+            raise ValueError(
+                "live_spawn_mode must be one of 'bootstrap' or 'centreline', "
+                f"got {live_spawn_mode!r}"
+            )
 
         # TrackCentreline owns the geometric track queries. Keeping it as a
         # separate object makes the environment easy to test without BeamNG.
@@ -162,6 +173,10 @@ class BeamNGRacingEnv(gym.Env):
         self.disable_shadows = bool(disable_shadows)
         self.beamng_host = str(beamng_host)
         self.beamng_port = int(beamng_port)
+        self.live_spawn_mode = live_spawn_mode_value
+        self.live_spawn_progress_m = float(live_spawn_progress_m)
+        self.live_spawn_lateral_offset_m = float(live_spawn_lateral_offset_m)
+        self.live_spawn_z_offset_m = float(live_spawn_z_offset_m)
         # Kept as a public knob for future tracks. The current live setup uses
         # the shared bootstrap Hirochi scenario to avoid drift between debug
         # launches and training launches.
@@ -177,6 +192,9 @@ class BeamNGRacingEnv(gym.Env):
         # object inspectable immediately after construction.
         self.current_step = 0
         self.previous_progress_m = 0.0
+        self.previous_raw_progress_m = 0.0
+        self.episode_start_progress_m = 0.0
+        self.episode_progress_m = 0.0
         self.stuck_steps = 0
         self.last_observation: np.ndarray | None = None
         self.last_info: dict[str, Any] = {}
@@ -198,12 +216,6 @@ class BeamNGRacingEnv(gym.Env):
         self._mock_forward_speed_mps = 8.0
         self._mock_vehicle_state: dict[str, Any] | None = None
         self._last_control = {"steering": 0.0, "throttle": 0.0, "brake": 0.0}
-
-        # Live BeamNG mode uses the same hand-verified spawn pose as
-        # beamng_bootstrap.py. The centreline-derived pose remains only as a
-        # fallback helper for future non-Hirochi experiments.
-        self._live_spawn_pos = tuple(float(value) for value in SPAWN_POS)
-        self._live_spawn_rot_quat = tuple(float(value) for value in SPAWN_ROT)
 
         if not self.use_mock:
             self._connect_beamng()
@@ -246,6 +258,9 @@ class BeamNGRacingEnv(gym.Env):
 
         self.current_step = 0
         self.previous_progress_m = 0.0
+        self.previous_raw_progress_m = 0.0
+        self.episode_start_progress_m = 0.0
+        self.episode_progress_m = 0.0
         self.stuck_steps = 0
 
         # This returns a backend-normalised vehicle-state dictionary. Mock mode
@@ -257,11 +272,23 @@ class BeamNGRacingEnv(gym.Env):
         # after reset rather than distance from zero on the lap.
         heading_rad = self._heading_from_state(vehicle_state)
         query = self.track.query(vehicle_state["pos"], vehicle_heading_rad=heading_rad)
-        self.previous_progress_m = float(query.lap_progress)
+        raw_start_progress_m = float(query.lap_progress)
+        raw_start_progress_ratio = float(query.lap_progress_ratio)
+        self.episode_start_progress_m = raw_start_progress_m
+        self.previous_progress_m = raw_start_progress_m
+        self.previous_raw_progress_m = raw_start_progress_m
+        self.episode_progress_m = 0.0
 
+        # progress_m/progress_ratio are raw centreline coordinates. They may
+        # start near the wrap boundary in live bootstrap mode. episode_progress_m
+        # is the training-facing distance travelled since this reset.
         info: dict[str, Any] = {
-            "progress_m": float(query.lap_progress),
-            "progress_ratio": float(query.lap_progress_ratio),
+            "progress_m": raw_start_progress_m,
+            "progress_ratio": raw_start_progress_ratio,
+            "raw_progress_m": raw_start_progress_m,
+            "raw_progress_ratio": raw_start_progress_ratio,
+            "episode_start_progress_m": self.episode_start_progress_m,
+            "episode_progress_m": self.episode_progress_m,
             "lateral_error_m": float(query.signed_lateral_error),
             "heading_error_rad": (
                 float(query.heading_error_rad)
@@ -269,6 +296,12 @@ class BeamNGRacingEnv(gym.Env):
                 else 0.0
             ),
             "mock_simulation": self.use_mock,
+            "spawn_mode": self.live_spawn_mode,
+            "near_progress_wrap": (
+                raw_start_progress_ratio > 0.95
+                or raw_start_progress_ratio < 0.05
+            ),
+            "spawn_lateral_error_abs_m": abs(float(query.signed_lateral_error)),
         }
 
         self.last_observation = observation
@@ -302,11 +335,21 @@ class BeamNGRacingEnv(gym.Env):
         terminated = termination.terminated
         truncated = termination.truncated
 
+        self.episode_progress_m += float(reward_info["progress_delta_m"])
+        reward_info["episode_progress_m"] = float(self.episode_progress_m)
+
+        # progress_m/progress_ratio are raw centreline coordinates retained for
+        # backwards compatibility. episode_progress_m is the reset-relative
+        # distance accumulated for training and future lap completion logic.
         info: dict[str, Any] = {
             "step": self.current_step,
             "control": control,
             "progress_m": float(query.lap_progress),
             "progress_ratio": float(query.lap_progress_ratio),
+            "raw_progress_m": float(query.lap_progress),
+            "raw_progress_ratio": float(query.lap_progress_ratio),
+            "episode_start_progress_m": self.episode_start_progress_m,
+            "episode_progress_m": self.episode_progress_m,
             "lateral_error_m": float(query.signed_lateral_error),
             "heading_error_rad": (
                 float(query.heading_error_rad)
@@ -335,6 +378,7 @@ class BeamNGRacingEnv(gym.Env):
         # These updates happen after reward calculation so the next call can
         # measure progress relative to this step's centreline projection.
         self.previous_progress_m = float(query.lap_progress)
+        self.previous_raw_progress_m = float(query.lap_progress)
         self.last_observation = observation
         self.last_info = info
 
@@ -359,8 +403,10 @@ class BeamNGRacingEnv(gym.Env):
         stuck = self.stuck_steps >= self.stuck_steps_limit
         max_steps_reached = self.current_step >= self.max_episode_steps
 
-        # TODO: Add lap completion once reset/progress wrapping is robust enough
-        # to distinguish a completed lap from start-line initialisation.
+        # TODO: Add lap completion based on episode_progress_m reaching
+        # track.total_lap_length. Do not use raw progress_ratio for this because
+        # the recommended live bootstrap spawn starts near the centreline wrap
+        # boundary rather than raw progress zero.
         lap_completed = False
 
         terminated = off_track or stuck or lap_completed
@@ -393,15 +439,15 @@ class BeamNGRacingEnv(gym.Env):
     ) -> tuple[float, dict[str, float]]:
         """Compute the first dense, inspectable racing reward.
 
-        The reward uses centreline progress as the main signal, then adds small
-        shaping terms for speed, heading alignment, lateral control, and obvious
-        failure modes. Every component is returned in ``reward_info`` so training
-        logs can explain exactly where reward came from.
+        The reward uses raw centreline progress delta as the main signal, then
+        adds small shaping terms for speed, heading alignment, lateral control,
+        and obvious failure modes. Every component is returned in ``reward_info``
+        so training logs can explain exactly where reward came from.
         """
 
         config = self.reward_config
-        current_progress_m = float(query_result.lap_progress)
-        progress_delta_m = current_progress_m - self.previous_progress_m
+        current_raw_progress_m = float(query_result.lap_progress)
+        progress_delta_m = current_raw_progress_m - self.previous_raw_progress_m
         total_lap_length = float(self.track.total_lap_length)
 
         # Closed-loop tracks jump from total_lap_length back to 0 at the start
@@ -448,6 +494,9 @@ class BeamNGRacingEnv(gym.Env):
         )
 
         reward_info = {
+            "raw_progress_m": float(current_raw_progress_m),
+            "episode_start_progress_m": float(self.episode_start_progress_m),
+            "episode_progress_m": float(self.episode_progress_m + progress_delta_m),
             "progress_delta_m": float(progress_delta_m),
             "progress_reward": float(progress_reward),
             "forward_speed_mps": float(forward_speed_mps),
@@ -747,8 +796,8 @@ class BeamNGRacingEnv(gym.Env):
 
             # The live env deliberately shares the bootstrap scenario setup so
             # manual debugging and training start from the same level, vehicle,
-            # part config, and spawn pose. scenario_name is kept as a public
-            # constructor parameter, but the shared setup is currently Hirochi.
+            # and part config. scenario_name is kept as a public constructor
+            # parameter, but the shared setup is currently Hirochi.
             scenario, vehicle = build_hirochi_sbr_scenario(
                 beamng,
                 vehicle_id=self.vehicle_id,
@@ -862,17 +911,18 @@ class BeamNGRacingEnv(gym.Env):
             pass
 
     def _try_place_live_vehicle_at_start(self) -> None:
-        """Best-effort placement of the live vehicle at the bootstrap spawn."""
+        """Best-effort placement of the live vehicle at the configured spawn."""
 
         self._ensure_live_connected()
+        spawn_pos, spawn_rot_quat = self._select_live_spawn_pose()
 
         # Prefer Vehicle.teleport because it resets velocity and keeps the call
         # tied to the connected vehicle object. BeamNGpy exposes an equivalent
         # beamng.vehicles.teleport(...) path, so try that as a fallback.
         try:
             self.vehicle.teleport(
-                self._live_spawn_pos,
-                rot_quat=self._live_spawn_rot_quat,
+                spawn_pos,
+                rot_quat=spawn_rot_quat,
                 reset=True,
             )
             return
@@ -882,8 +932,8 @@ class BeamNGRacingEnv(gym.Env):
         try:
             self.beamng.vehicles.teleport(
                 self.vehicle,
-                self._live_spawn_pos,
-                rot_quat=self._live_spawn_rot_quat,
+                spawn_pos,
+                rot_quat=spawn_rot_quat,
                 reset=True,
             )
             return
@@ -926,29 +976,64 @@ class BeamNGRacingEnv(gym.Env):
             "heading_rad": heading_rad,
         }
 
+    def _select_live_spawn_pose(
+        self,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+        """Return the live BeamNG spawn pose selected by live_spawn_mode."""
+
+        if self.live_spawn_mode == "bootstrap":
+            # Bootstrap mode uses the hand-verified Hirochi/SBR pose from
+            # beamng_bootstrap.py because it is known to open the scenario
+            # correctly and places the car on the BeamNG start-marker pose.
+            # This is the recommended mode for live training.
+            return (
+                tuple(float(value) for value in SPAWN_POS),
+                tuple(float(value) for value in SPAWN_ROT),
+            )
+
+        if self.live_spawn_mode == "centreline":
+            # Centreline mode is experimental. It aligns with the track JSON,
+            # but may not match the actual BeamNG road surface, vehicle heading,
+            # terrain height, or painted start markers.
+            centre_point = np.asarray(
+                self.track.point_at_progress(self.live_spawn_progress_m),
+                dtype=float,
+            ).reshape(-1)
+            if centre_point.shape[0] < 3:
+                centre_point = np.asarray(
+                    [centre_point[0], centre_point[1], 0.0],
+                    dtype=float,
+                )
+
+            base_query = self.track.query(centre_point[:3])
+            tangent_xy = np.asarray(base_query.track_tangent_xy, dtype=float)
+            left_normal_xy = np.asarray([-tangent_xy[1], tangent_xy[0]], dtype=float)
+
+            position_xyz = centre_point[:3].copy()
+            position_xyz[:2] += left_normal_xy * self.live_spawn_lateral_offset_m
+            position_xyz[2] += self.live_spawn_z_offset_m
+
+            heading_rad = float(base_query.track_heading_rad)
+            half_yaw = 0.5 * heading_rad
+            rot_quat = (0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+            return (
+                tuple(float(value) for value in position_xyz[:3]),
+                tuple(float(value) for value in rot_quat),
+            )
+
+        # Constructor validation should make this unreachable, but keeping this
+        # branch gives a clear error if the attribute is changed at runtime.
+        raise ValueError(
+            "live_spawn_mode must be one of 'bootstrap' or 'centreline', "
+            f"got {self.live_spawn_mode!r}"
+        )
+
     def _default_spawn_pose(
         self,
     ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
-        """Fallback spawn pose for future tracks without a hand-verified pose."""
+        """Backward-compatible alias for the selected live spawn pose."""
 
-        start_point = np.asarray(
-            self.track.point_at_progress(0.0),
-            dtype=float,
-        ).reshape(-1)
-        if start_point.shape[0] < 3:
-            start_point = np.asarray([start_point[0], start_point[1], 0.0], dtype=float)
-
-        start_query = self.track.query(start_point[:3])
-        heading_rad = float(start_query.track_heading_rad)
-
-        # BeamNGpy wants quaternions as (x, y, z, w). This is a flat yaw-only
-        # quaternion, good enough for a generated scenario on a mostly level
-        # start segment. Track-authored scenarios should eventually provide an
-        # exact spawn quaternion.
-        half_yaw = 0.5 * heading_rad
-        rot_quat = (0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
-        pos = tuple(float(value) for value in start_point[:3])
-        return pos, tuple(float(value) for value in rot_quat)
+        return self._select_live_spawn_pose()
 
     @staticmethod
     def _extract_live_xyz(
