@@ -322,6 +322,13 @@ class BeamNGRacingEnv(gym.Env):
                 "lap_completed": termination.lap_completed,
             },
             "mock_simulation": self.use_mock,
+            "vehicle_pos": vehicle_state.get("pos"),
+            "vehicle_velocity": vehicle_state.get("velocity"),
+            "vehicle_state": {
+                "pos": vehicle_state.get("pos"),
+                "velocity": vehicle_state.get("velocity"),
+                "heading_rad": vehicle_state.get("heading_rad"),
+            },
             "reward": reward_info,
         }
 
