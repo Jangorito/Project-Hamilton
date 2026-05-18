@@ -6,13 +6,26 @@ import os
 from pathlib import Path
 from typing import Tuple
 
-from beamngpy import BeamNGpy, Scenario, Vehicle, set_up_simple_logging
+from beamngpy import BeamNGpy, set_up_simple_logging
 
-from beamng_rl.bootstrap.graphics_settings import (
-    DEFAULT_LOW_GRAPHICS_SETTINGS_FILE,
-    apply_graphics_settings,
-    load_graphics_settings,
+# Keep these names available from beamng_bootstrap.py for older manual/debug
+# snippets while the live env imports the side-effect-free setup module.
+from beamng_rl.bootstrap.beamng_setup import (
+    BEAMNG_HOME_CANDIDATES,
+    BEAMNG_HOME_ENV_VAR,
+    HOST,
+    JANGO_BEAMNG_HOME,
+    PORT,
+    SPAWN_POS,
+    SPAWN_ROT,
+    STUDENT_BEAMNG_HOME,
+    apply_low_graphics_preset,
+    apply_shadow_disabling,
+    build_hirochi_sbr_scenario,
+    is_student_beamng_home,
+    resolve_beamng_home_from_path_or_env,
 )
+from beamng_rl.bootstrap.graphics_settings import DEFAULT_LOW_GRAPHICS_SETTINGS_FILE
 from beamng_rl.track.geometry import resample_polyline
 from beamng_rl.track.raceline_loader import derive_race_path_from_files
 from beamng_rl.visualisation.debug_draw_path import DebugPathDrawer
@@ -21,11 +34,6 @@ from beamng_rl.visualisation.debug_draw_path import DebugPathDrawer
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-BEAMNG_HOME_ENV_VAR = "BEAMNG_HOME"
-STUDENT_BEAMNG_HOME = Path(r"C:\Users\Student\BeamNG")
-JANGO_BEAMNG_HOME = Path(r"C:\Users\Jango\BeamNG.tech.v0.38.3.0")
-BEAMNG_HOME_CANDIDATES = (STUDENT_BEAMNG_HOME, JANGO_BEAMNG_HOME)
-
 TRACK_DATA_DIR_ENV_VAR = "BEAMNG_TRACK_DATA_DIR"
 STUDENT_TRACK_DATA_DIR = Path(r"C:\Users\Student\Workspace\Project-Hamilton\data\hirochi_track")
 JANGO_TRACK_DATA_DIR = Path(r"C:\Users\Jango\workspace\BeamNG\data\hirochi_track")
@@ -33,23 +41,7 @@ TRACK_DATA_DIR_CANDIDATES = (STUDENT_TRACK_DATA_DIR, JANGO_TRACK_DATA_DIR)
 RACE_FILE_NAME = "race.race.json"
 ITEMS_FILE_NAME = "items.level.json"
 
-HOST = "localhost"
-PORT = 64256
-
-SPAWN_POS = (-406.8015137, 257.4653625, 25.0089035)
-SPAWN_ROT = (-0.0001524259429, 0.0005056571858, -0.2886135897, 0.9574455164)
-
 HIGHLIGHT_IDS = [30, 12, 10, 17]
-
-# First, deliberately tiny graphics-setting probe. BeamNG's default
-# game-settings file lists this as:
-#   $pref::Shadows::disable = 0; // 0 = None, 1 = Partial, 2 = All
-# BeamNGpy routes settings changes through BeamNG's Lua settings.setValue().
-# The graphics option key that maps to "$pref::Shadows::disable" is
-# "GraphicDisableShadows"; using "Shadows::disable" is accepted but only stores
-# an inert settings value, so it does not visibly change shadows.
-SHADOWS_DISABLE_SETTING_KEY = "GraphicDisableShadows"
-SHADOWS_DISABLE_ALL = "2"
 
 
 # ---------------------------------------------------------------------------
@@ -91,73 +83,10 @@ def export_path(
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
-def build_scenario(bng: BeamNGpy) -> tuple[Scenario, Vehicle]:
-    scenario = Scenario(
-        "hirochi_raceway",
-        "sbr4_bootstrap",
-        description="SBR4 Track bootstrap scenario",
-    )
+def build_scenario(bng: BeamNGpy) -> tuple[object, object]:
+    """Build the shared Hirochi/SBR scenario used by bootstrap and live env."""
 
-    vehicle = Vehicle(
-        "ego_vehicle",
-        model="sbr",
-        part_config="vehicles/sbr/track.pc",
-        license="JANGO",
-        color="Blue",
-    )
-
-    scenario.add_vehicle(vehicle, pos=SPAWN_POS, rot_quat=SPAWN_ROT)
-    scenario.make(bng)
-    return scenario, vehicle
-
-
-def is_student_beamng_home(beamng_home: Path) -> bool:
-    """Return whether the selected install is the Student-machine BeamNG path."""
-    return os.path.normcase(str(beamng_home.resolve(strict=False))) == os.path.normcase(
-        str(STUDENT_BEAMNG_HOME.resolve(strict=False))
-    )
-
-
-def apply_shadow_disabling(bng: BeamNGpy) -> bool:
-    """
-    Try the first API-based low-graphics setting.
-
-    This intentionally changes only shadows for now. If this BeamNGpy setting
-    call works reliably, we can later add a fuller low-graphics preset without
-    editing BeamNG's default settings file directly.
-    """
-    try:
-        bng.settings.change(SHADOWS_DISABLE_SETTING_KEY, SHADOWS_DISABLE_ALL)
-        bng.settings.apply_graphics()
-    except Exception as exc:
-        print(
-            "WARNING: Could not apply BeamNG shadow-disabling setting "
-            f"{SHADOWS_DISABLE_SETTING_KEY}={SHADOWS_DISABLE_ALL}: {exc!r}"
-        )
-        return False
-
-    print(
-        "Applied BeamNG shadow-disabling setting "
-        f"{SHADOWS_DISABLE_SETTING_KEY}={SHADOWS_DISABLE_ALL}."
-    )
-    return True
-
-
-def apply_low_graphics_preset(bng: BeamNGpy, settings_file: Path) -> bool:
-    """
-    Apply the editable low-graphics preset.
-
-    The preset lives outside the Python code so we can tune it by editing
-    comments and values in one place while keeping the bootstrap logic stable.
-    """
-    try:
-        settings = load_graphics_settings(settings_file)
-    except Exception as exc:
-        print(f"WARNING: Could not load low-graphics settings from {settings_file}: {exc!r}")
-        return False
-
-    print(f"Applying low-graphics settings from: {settings_file}")
-    return apply_graphics_settings(bng, settings, label="low graphics")
+    return build_hirochi_sbr_scenario(bng)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -235,29 +164,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def resolve_beamng_home(args: argparse.Namespace) -> Path:
-    beamng_home = args.beamng_home
-
-    if beamng_home is None:
-        env_beamng_home = os.environ.get(BEAMNG_HOME_ENV_VAR)
-        if env_beamng_home:
-            beamng_home = Path(env_beamng_home)
-        else:
-            beamng_home = next(
-                (candidate for candidate in BEAMNG_HOME_CANDIDATES if candidate.is_dir()),
-                STUDENT_BEAMNG_HOME,
-            )
-
-    beamng_home = beamng_home.expanduser()
-
-    if not beamng_home.exists():
-        raise FileNotFoundError(
-            f"BeamNG home path does not exist: {beamng_home}. "
-            f"Set it with --beamng-home or the {BEAMNG_HOME_ENV_VAR} environment variable."
-        )
-    if not beamng_home.is_dir():
-        raise NotADirectoryError(f"BeamNG home path is not a directory: {beamng_home}")
-
-    return beamng_home
+    return resolve_beamng_home_from_path_or_env(args.beamng_home)
 
 
 def resolve_track_data_dir(args: argparse.Namespace) -> Path:
@@ -390,7 +297,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-"""
+r"""
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\venv\Scripts\Activate.ps1
 

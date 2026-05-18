@@ -1,10 +1,10 @@
 """Minimal Gymnasium racing environment for BeamNG RL experiments.
 
-This module creates the first real Gymnasium-compatible wrapper around the
-track-query and observation-building code that already exists in the project.
-The BeamNG-specific methods are intentionally small placeholders for now: they
-make the integration points obvious while still allowing a smoke test to run
-without launching BeamNG.tech.
+This module creates the Gymnasium-compatible wrapper around the track-query and
+observation-building code that already exists in the project. Mock mode remains
+the safe default for unit and smoke testing; live mode reuses the manual
+bootstrap's Hirochi/SBR setup so simulator experiments start from the same
+scenario, vehicle, and spawn pose.
 """
 
 from __future__ import annotations
@@ -19,6 +19,16 @@ import gymnasium as gym
 import numpy as np
 
 try:
+    from beamng_rl.bootstrap.beamng_setup import (
+        HOST,
+        PORT,
+        SPAWN_POS,
+        SPAWN_ROT,
+        apply_low_graphics_preset,
+        apply_shadow_disabling,
+        build_hirochi_sbr_scenario,
+        resolve_beamng_home_from_path_or_env,
+    )
     from beamng_rl.envs.observation_builder import ObservationBuilder
     from beamng_rl.track.query_utils import TrackCentreline, TrackQueryResult
 except ModuleNotFoundError as exc:
@@ -34,6 +44,16 @@ except ModuleNotFoundError as exc:
 
     src_root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(src_root))
+    from beamng_rl.bootstrap.beamng_setup import (
+        HOST,
+        PORT,
+        SPAWN_POS,
+        SPAWN_ROT,
+        apply_low_graphics_preset,
+        apply_shadow_disabling,
+        build_hirochi_sbr_scenario,
+        resolve_beamng_home_from_path_or_env,
+    )
     from beamng_rl.envs.observation_builder import ObservationBuilder
     from beamng_rl.track.query_utils import TrackCentreline, TrackQueryResult
 
@@ -69,8 +89,8 @@ class BeamNGRacingEnv(gym.Env):
 
     The environment already exposes the Gymnasium API expected by RL libraries:
     ``reset()``, ``step()``, ``observation_space``, and ``action_space``. The
-    simulator-facing methods are deliberately separated so they can later be
-    replaced with BeamNGpy calls without rewriting reward or observation logic.
+    simulator-facing methods stay deliberately separated so live BeamNGpy setup
+    can evolve without rewriting reward or observation logic.
     """
 
     metadata = {"render_modes": []}
@@ -85,10 +105,14 @@ class BeamNGRacingEnv(gym.Env):
         render_mode: str | None = None,
         reward_config: RewardConfig | None = None,
         use_mock: bool = True,
-        beamng_host: str = "localhost",
-        beamng_port: int = 64256,
+        beamng_home: str | Path | None = None,
+        launch_beamng: bool = True,
+        apply_low_graphics: bool = False,
+        disable_shadows: bool = False,
+        beamng_host: str = HOST,
+        beamng_port: int = PORT,
         scenario_name: str = "hirochi_raceway",
-        vehicle_id: str = "ego",
+        vehicle_id: str = "ego_vehicle",
         steps_per_action: int = 3,
     ) -> None:
         super().__init__()
@@ -132,8 +156,15 @@ class BeamNGRacingEnv(gym.Env):
         # it keeps imports, CI-style smoke tests, and reward debugging possible
         # on machines where BeamNG.tech is not running.
         self.use_mock = bool(use_mock)
+        self.beamng_home = beamng_home
+        self.launch_beamng = bool(launch_beamng)
+        self.apply_low_graphics = bool(apply_low_graphics)
+        self.disable_shadows = bool(disable_shadows)
         self.beamng_host = str(beamng_host)
         self.beamng_port = int(beamng_port)
+        # Kept as a public knob for future tracks. The current live setup uses
+        # the shared bootstrap Hirochi scenario to avoid drift between debug
+        # launches and training launches.
         self.scenario_name = str(scenario_name)
         self.vehicle_id = str(vehicle_id)
         self.steps_per_action = int(steps_per_action)
@@ -156,6 +187,7 @@ class BeamNGRacingEnv(gym.Env):
         self.beamng = None
         self.scenario = None
         self.vehicle = None
+        self._resolved_beamng_home: Path | None = None
 
         # Mock-state variables used only while no live BeamNG vehicle is
         # connected. They let step() move around the track during smoke tests.
@@ -167,11 +199,11 @@ class BeamNGRacingEnv(gym.Env):
         self._mock_vehicle_state: dict[str, Any] | None = None
         self._last_control = {"steering": 0.0, "throttle": 0.0, "brake": 0.0}
 
-        # Live-mode spawn defaults are derived from the centreline instead of
-        # hard-coded bootstrap constants. This is deliberately conservative for
-        # Chunk 2: it gives BeamNGpy a plausible start pose while leaving exact
-        # scenario/spawn authoring as a later, track-specific TODO.
-        self._live_spawn_pos, self._live_spawn_rot_quat = self._default_spawn_pose()
+        # Live BeamNG mode uses the same hand-verified spawn pose as
+        # beamng_bootstrap.py. The centreline-derived pose remains only as a
+        # fallback helper for future non-Hirochi experiments.
+        self._live_spawn_pos = tuple(float(value) for value in SPAWN_POS)
+        self._live_spawn_rot_quat = tuple(float(value) for value in SPAWN_ROT)
 
         if not self.use_mock:
             self._connect_beamng()
@@ -648,10 +680,9 @@ class BeamNGRacingEnv(gym.Env):
     def close(self) -> None:
         """Close any BeamNG connection and clear local handles."""
 
-        # This remains safe even if live setup failed halfway through. The
-        # BeamNGpy instance is created with quit_on_close=False, so close()
-        # disconnects this environment without shutting down the user's
-        # already-running BeamNG.tech process.
+        # This remains safe even if live setup failed halfway through. When
+        # launch_beamng=False, BeamNGpy is created with quit_on_close=False so
+        # close() disconnects Python without shutting down the user's process.
         beamng_close = getattr(self.beamng, "close", None)
         if callable(beamng_close):
             beamng_close()
@@ -659,16 +690,17 @@ class BeamNGRacingEnv(gym.Env):
         self.beamng = None
         self.scenario = None
         self.vehicle = None
+        self._resolved_beamng_home = None
 
     def _connect_beamng(self) -> None:
-        """Connect to BeamNG.tech and prepare a minimal live scenario.
+        """Connect to BeamNG.tech and prepare the shared Hirochi/SBR scenario.
 
         BeamNGpy is imported here, not at module import time. That keeps mock
         smoke tests and simple imports working on machines without BeamNGpy.
         """
 
         try:
-            from beamngpy import BeamNGpy, Scenario, Vehicle
+            from beamngpy import BeamNGpy
         except ImportError as exc:
             raise ImportError(
                 "BeamNGpy must be installed to use BeamNGRacingEnv(use_mock=False). "
@@ -678,52 +710,45 @@ class BeamNGRacingEnv(gym.Env):
 
         beamng = None
         try:
-            # No beamng_home constructor parameter is added in Chunk 2, so live
-            # mode connects to an already-running BeamNG.tech instance instead
-            # of launching a new process. quit_on_close=False avoids killing
-            # that external process when env.close() is called.
-            beamng = BeamNGpy(
-                self.beamng_host,
-                self.beamng_port,
-                quit_on_close=False,
-            )
-            beamng.open(launch=False)
+            if self.launch_beamng:
+                self._resolved_beamng_home = resolve_beamng_home_from_path_or_env(
+                    self.beamng_home
+                )
+                beamng = BeamNGpy(
+                    self.beamng_host,
+                    self.beamng_port,
+                    home=str(self._resolved_beamng_home),
+                )
+                beamng.open(launch=True)
+            else:
+                # This mode is useful when BeamNG.tech is already open. Keep
+                # quit_on_close disabled so env.close() only disconnects Python.
+                beamng = BeamNGpy(
+                    self.beamng_host,
+                    self.beamng_port,
+                    quit_on_close=False,
+                )
+                beamng.open(launch=False)
 
-            # Ask BeamNG for deterministic physics stepping. If this fails, the
-            # environment still connects, but step timing may depend on current
-            # simulator settings. The TODO in _advance_simulation marks the
-            # training-time configuration we will likely want later.
+            # Deterministic stepping plus pause mirrors beamng_bootstrap.py and
+            # makes beamng.step(...) the clock source for RL actions.
             try:
                 beamng.settings.set_deterministic(60)
                 beamng.pause()
             except Exception:
                 pass
 
-            # Minimal scenario authoring: treat scenario_name as the BeamNG
-            # level/map name for now. The generated scenario name is internal
-            # to this env instance.
-            #
-            # TODO: replace this with project-owned scenario files once the
-            # reset pose, vehicle model, traffic, and sensors are nailed down.
-            scenario = Scenario(
-                self.scenario_name,
-                f"beamng_rl_{self.vehicle_id}",
-                description="Minimal BeamNG RL live scenario",
+            # The live env deliberately shares the bootstrap scenario setup so
+            # manual debugging and training start from the same level, vehicle,
+            # part config, and spawn pose. scenario_name is kept as a public
+            # constructor parameter, but the shared setup is currently Hirochi.
+            scenario, vehicle = build_hirochi_sbr_scenario(
+                beamng,
+                vehicle_id=self.vehicle_id,
+                scenario_instance_name=f"beamng_rl_{self.vehicle_id}",
             )
-            vehicle = Vehicle(
-                self.vehicle_id,
-                model="sbr",
-                part_config="vehicles/sbr/track.pc",
-                license="RL",
-                color="Blue",
-            )
-            scenario.add_vehicle(
-                vehicle,
-                pos=self._live_spawn_pos,
-                rot_quat=self._live_spawn_rot_quat,
-            )
-            scenario.make(beamng)
             beamng.scenario.load(scenario)
+            self._try_hide_live_hud(beamng)
             beamng.scenario.start()
 
             # Re-pause after scenario start so beamng.step(...) controls the
@@ -732,6 +757,8 @@ class BeamNGRacingEnv(gym.Env):
                 beamng.pause()
             except Exception:
                 pass
+            self._try_hide_live_hud(beamng)
+            self._try_apply_live_graphics(beamng)
 
             self.beamng = beamng
             self.scenario = scenario
@@ -749,16 +776,57 @@ class BeamNGRacingEnv(gym.Env):
             self.beamng = None
             self.scenario = None
             self.vehicle = None
+            self._resolved_beamng_home = None
+            connection_mode = (
+                "launch BeamNG.tech"
+                if self.launch_beamng
+                else "connect to an already-running BeamNG.tech process"
+            )
             raise RuntimeError(
                 "Failed to initialise live BeamNG mode at "
-                f"{self.beamng_host}:{self.beamng_port}. Start BeamNG.tech with "
-                "BeamNGpy communication enabled, confirm the level/scenario name "
-                f"{self.scenario_name!r} is available, or use use_mock=True. "
+                f"{self.beamng_host}:{self.beamng_port} while trying to "
+                f"{connection_mode}. Confirm the shared Hirochi/SBR scenario "
+                "is available, or use use_mock=True. "
                 f"Original error: {exc!r}"
             ) from exc
 
+    def _try_hide_live_hud(self, beamng: Any) -> None:
+        """Best-effort HUD hiding; visual setup should not fail an RL reset."""
+
+        hide_hud = getattr(getattr(beamng, "ui", None), "hide_hud", None)
+        if not callable(hide_hud):
+            return
+
+        try:
+            hide_hud()
+        except Exception:
+            pass
+
+    def _try_apply_live_graphics(self, beamng: Any) -> None:
+        """Apply optional graphics settings without making them training-critical."""
+
+        if self.disable_shadows:
+            try:
+                apply_shadow_disabling(beamng)
+            except Exception:
+                # TODO: collect graphics-setting failures in info/logging once
+                # the live training harness has a central diagnostics channel.
+                pass
+
+        if self.apply_low_graphics:
+            try:
+                apply_low_graphics_preset(beamng)
+            except Exception:
+                # Low graphics is a convenience for local performance, not a
+                # condition for the environment to be usable.
+                pass
+
     def _ensure_live_connected(self) -> None:
-        """Raise a clear error if live-mode methods are called without BeamNG."""
+        """Reconnect if needed, then raise a clear error if BeamNG is unavailable."""
+
+        if self.beamng is None or self.vehicle is None:
+            if not self.use_mock:
+                self._connect_beamng()
 
         if self.beamng is None or self.vehicle is None:
             raise RuntimeError(
@@ -787,7 +855,7 @@ class BeamNGRacingEnv(gym.Env):
             pass
 
     def _try_place_live_vehicle_at_start(self) -> None:
-        """Best-effort placement of the live vehicle at the centreline start."""
+        """Best-effort placement of the live vehicle at the bootstrap spawn."""
 
         self._ensure_live_connected()
 
@@ -854,7 +922,7 @@ class BeamNGRacingEnv(gym.Env):
     def _default_spawn_pose(
         self,
     ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
-        """Derive a simple live-mode spawn pose from the first centreline point."""
+        """Fallback spawn pose for future tracks without a hand-verified pose."""
 
         start_point = np.asarray(
             self.track.point_at_progress(0.0),
@@ -958,8 +1026,8 @@ def _smoke_test() -> None:
     )
 
     # Mock mode is the default and intentionally remains the smoke-test path.
-    # To try live mode manually, start BeamNG.tech first and instantiate:
-    #   env = BeamNGRacingEnv(centreline_path, use_mock=False)
+    # To try live mode manually with the shared bootstrap setup, instantiate:
+    #   env = BeamNGRacingEnv(centreline_path, use_mock=False, launch_beamng=True)
     env = BeamNGRacingEnv(centreline_path)
     print(f"Loaded track: {centreline_path}")
     print(f"Observation space: {env.observation_space}")
