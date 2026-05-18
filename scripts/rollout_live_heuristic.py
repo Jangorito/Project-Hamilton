@@ -26,6 +26,15 @@ CENTRELINE_PATH = (
 )
 OUTPUT_DIR = REPO_ROOT / "logs" / "live_rollouts"
 
+MEDIUM_CURVATURE_RISK = 0.25
+HIGH_CURVATURE_RISK = 0.55
+
+TARGET_SPEED_STRAIGHT_MPS = 34.0
+TARGET_SPEED_MEDIUM_CURVE_MPS = 30.0
+TARGET_SPEED_HIGH_CURVE_MPS = 24.0
+TARGET_SPEED_ERROR_MPS = 20.0
+TARGET_SPEED_EMERGENCY_MPS = 14.0
+
 CSV_FIELDS = [
     "step",
     "action_steering",
@@ -47,6 +56,12 @@ CSV_FIELDS = [
     "progress_jump_detected",
     "original_progress_delta_m",
     "progress_jump_penalty",
+    "curvature_20_norm",
+    "curvature_40_norm",
+    "curvature_80_norm",
+    "curvature_risk",
+    "target_speed_mps",
+    "speed_error_mps",
 ]
 
 
@@ -73,14 +88,25 @@ def _reward_float(info: Mapping[str, Any], key: str, default: float = 0.0) -> fl
 
 
 def heuristic_action(
+    observation: np.ndarray,
     info: dict[str, Any],
     previous_action: np.ndarray | None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, dict[str, float]]:
     """Return a diagnostic baseline control action from the latest env info."""
 
     lateral_error_m = _info_float(info, "lateral_error_m")
     heading_error_rad = _info_float(info, "heading_error_rad")
     forward_speed_mps = _reward_float(info, "forward_speed_mps")
+    observation = np.asarray(observation, dtype=np.float32)
+
+    curvature_20_norm = float(observation[8])
+    curvature_40_norm = float(observation[9])
+    curvature_80_norm = float(observation[10])
+    curvature_risk = max(
+        abs(curvature_20_norm),
+        abs(curvature_40_norm),
+        abs(curvature_80_norm),
+    )
 
     # This remains a diagnostic baseline, not the learned RL policy.
     # The live sign sweep selected positive heading plus positive lateral
@@ -92,44 +118,64 @@ def heuristic_action(
     if forward_speed_mps > 28.0:
         steering *= 1.15
 
+    if abs(lateral_error_m) > 3.0:
+        steering *= 1.15
+
     if abs(lateral_error_m) > 4.0:
         steering *= 1.25
 
     steering = float(np.clip(steering, -1.0, 1.0))
 
-    # Avoid a low fixed speed cap: accelerate/coast on stable sections, then
-    # slow down when lateral/heading error indicates loss of control risk.
-    # This targets the previous high-speed off-track failure mode without
-    # treating high speed itself as the problem.
-    risk = abs(lateral_error_m) + 6.0 * abs(heading_error_rad)
-
-    if forward_speed_mps < 28.0:
-        throttle_brake = 0.30
-    elif forward_speed_mps < 34.0:
-        throttle_brake = 0.10
+    # Avoid a low fixed speed cap: keep speed on low-risk sections, but slow
+    # before corners using lookahead curvature from the observation vector.
+    if curvature_risk > HIGH_CURVATURE_RISK:
+        target_speed_mps = TARGET_SPEED_HIGH_CURVE_MPS
+    elif curvature_risk > MEDIUM_CURVATURE_RISK:
+        target_speed_mps = TARGET_SPEED_MEDIUM_CURVE_MPS
     else:
+        target_speed_mps = TARGET_SPEED_STRAIGHT_MPS
+
+    if abs(lateral_error_m) > 4.0 or abs(heading_error_rad) > 0.35:
+        target_speed_mps = min(target_speed_mps, TARGET_SPEED_ERROR_MPS)
+
+    if abs(lateral_error_m) > 6.0 or abs(heading_error_rad) > 0.6:
+        target_speed_mps = min(target_speed_mps, TARGET_SPEED_EMERGENCY_MPS)
+
+    speed_error_mps = target_speed_mps - forward_speed_mps
+
+    if speed_error_mps > 3.0:
+        throttle_brake = 0.35
+    elif speed_error_mps > 0.5:
+        throttle_brake = 0.15
+    elif speed_error_mps > -2.0:
         throttle_brake = 0.0
-
-    if risk > 4.0:
-        throttle_brake = min(throttle_brake, 0.0)
-
-    if risk > 6.0:
+    elif speed_error_mps > -6.0:
         throttle_brake = -0.20
-
-    if risk > 8.0:
+    else:
         throttle_brake = -0.45
 
     throttle_brake = float(np.clip(throttle_brake, -1.0, 1.0))
 
     _ = previous_action
 
-    return np.asarray([steering, throttle_brake], dtype=np.float32)
+    action = np.asarray([steering, throttle_brake], dtype=np.float32)
+    debug = {
+        "curvature_20_norm": curvature_20_norm,
+        "curvature_40_norm": curvature_40_norm,
+        "curvature_80_norm": curvature_80_norm,
+        "curvature_risk": curvature_risk,
+        "target_speed_mps": target_speed_mps,
+        "speed_error_mps": speed_error_mps,
+    }
+
+    return action, debug
 
 
 def _build_csv_row(
     *,
     step_number: int,
     action: np.ndarray,
+    debug: Mapping[str, float],
     reward: float,
     terminated: bool,
     truncated: bool,
@@ -169,6 +215,12 @@ def _build_csv_row(
         "progress_jump_penalty": _float_or_default(
             reward_info.get("progress_jump_penalty")
         ),
+        "curvature_20_norm": _float_or_default(debug.get("curvature_20_norm")),
+        "curvature_40_norm": _float_or_default(debug.get("curvature_40_norm")),
+        "curvature_80_norm": _float_or_default(debug.get("curvature_80_norm")),
+        "curvature_risk": _float_or_default(debug.get("curvature_risk")),
+        "target_speed_mps": _float_or_default(debug.get("target_speed_mps")),
+        "speed_error_mps": _float_or_default(debug.get("speed_error_mps")),
     }
 
 
@@ -181,6 +233,8 @@ def _print_step(row: Mapping[str, Any]) -> None:
         f"progress_delta_m={row['progress_delta_m']:.4f} "
         f"progress_jump_detected={row['progress_jump_detected']} "
         f"forward_speed_mps={row['forward_speed_mps']:.3f} "
+        f"curv_risk={row['curvature_risk']:.3f} "
+        f"target_speed={row['target_speed_mps']:.1f} "
         f"lateral_error_m={row['lateral_error_m']:.3f} "
         f"heading_error_rad={row['heading_error_rad']:.4f} "
         f"reward={row['total_reward']:.4f} "
@@ -214,7 +268,7 @@ def main() -> None:
                 steps_per_action=STEPS_PER_ACTION,
                 max_episode_steps=MAX_EPISODE_STEPS,
             )
-            _, latest_info = env.reset()
+            latest_observation, latest_info = env.reset()
         except Exception:
             _print_live_failure_hints()
             raise
@@ -224,6 +278,9 @@ def main() -> None:
         final_lateral_error_m = _info_float(latest_info, "lateral_error_m")
         final_heading_error_rad = _info_float(latest_info, "heading_error_rad")
         max_forward_speed_mps = 0.0
+        max_curvature_risk = 0.0
+        target_speed_total_mps = 0.0
+        target_speed_count = 0
         progress_jump_count = 0
         final_termination_reason = "none"
         previous_action: np.ndarray | None = None
@@ -234,12 +291,23 @@ def main() -> None:
 
             for step_index in range(MAX_STEPS):
                 step_number = step_index + 1
-                action = heuristic_action(latest_info, previous_action)
-                _, reward, terminated, truncated, latest_info = env.step(action)
+                action, debug = heuristic_action(
+                    latest_observation,
+                    latest_info,
+                    previous_action,
+                )
+                (
+                    latest_observation,
+                    reward,
+                    terminated,
+                    truncated,
+                    latest_info,
+                ) = env.step(action)
 
                 row = _build_csv_row(
                     step_number=step_number,
                     action=action,
+                    debug=debug,
                     reward=reward,
                     terminated=terminated,
                     truncated=truncated,
@@ -258,6 +326,12 @@ def main() -> None:
                     max_forward_speed_mps,
                     float(row["forward_speed_mps"]),
                 )
+                max_curvature_risk = max(
+                    max_curvature_risk,
+                    float(row["curvature_risk"]),
+                )
+                target_speed_total_mps += float(row["target_speed_mps"])
+                target_speed_count += 1
                 final_termination_reason = str(row["termination_reason"])
                 previous_action = action
 
@@ -267,16 +341,23 @@ def main() -> None:
         total_episode_progress_m = (
             final_episode_progress_m - start_episode_progress_m
         )
+        average_target_speed_mps = (
+            target_speed_total_mps / target_speed_count
+            if target_speed_count > 0
+            else 0.0
+        )
 
         print()
         print("Summary:")
         print(f"CSV path: {csv_path}")
         print(f"total episode progress: {total_episode_progress_m:.3f} m")
-        print(f"progress jumps detected: {progress_jump_count}")
         print(f"max forward speed: {max_forward_speed_mps:.3f} m/s")
         print(f"final lateral error: {final_lateral_error_m:.3f} m")
         print(f"final heading error: {final_heading_error_rad:.4f} rad")
         print(f"final termination reason: {final_termination_reason}")
+        print(f"progress jumps detected: {progress_jump_count}")
+        print(f"max curvature risk: {max_curvature_risk:.3f}")
+        print(f"average target speed: {average_target_speed_mps:.3f} m/s")
 
     finally:
         if env is not None:
