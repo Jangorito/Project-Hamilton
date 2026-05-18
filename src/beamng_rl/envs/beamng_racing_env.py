@@ -10,6 +10,7 @@ without launching BeamNG.tech.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,12 @@ class BeamNGRacingEnv(gym.Env):
         min_progress_delta_m: float = 0.05,
         render_mode: str | None = None,
         reward_config: RewardConfig | None = None,
+        use_mock: bool = True,
+        beamng_host: str = "localhost",
+        beamng_port: int = 64256,
+        scenario_name: str = "hirochi_raceway",
+        vehicle_id: str = "ego",
+        steps_per_action: int = 3,
     ) -> None:
         super().__init__()
 
@@ -121,6 +128,20 @@ class BeamNGRacingEnv(gym.Env):
         self.render_mode = render_mode
         self.reward_config = reward_config or RewardConfig()
 
+        # Simulation backend selection. The mock backend is the default because
+        # it keeps imports, CI-style smoke tests, and reward debugging possible
+        # on machines where BeamNG.tech is not running.
+        self.use_mock = bool(use_mock)
+        self.beamng_host = str(beamng_host)
+        self.beamng_port = int(beamng_port)
+        self.scenario_name = str(scenario_name)
+        self.vehicle_id = str(vehicle_id)
+        self.steps_per_action = int(steps_per_action)
+        if self.steps_per_action <= 0:
+            raise ValueError(
+                f"steps_per_action must be a positive integer, got {steps_per_action!r}"
+            )
+
         # Runtime counters are reset in reset(), but initial values keep the
         # object inspectable immediately after construction.
         self.current_step = 0
@@ -133,6 +154,7 @@ class BeamNGRacingEnv(gym.Env):
         # BeamNGpy connection and Vehicle object, but importing BeamNGpy here is
         # intentionally avoided so the environment can be imported in tests.
         self.beamng = None
+        self.scenario = None
         self.vehicle = None
 
         # Mock-state variables used only while no live BeamNG vehicle is
@@ -144,6 +166,15 @@ class BeamNGRacingEnv(gym.Env):
         self._mock_forward_speed_mps = 8.0
         self._mock_vehicle_state: dict[str, Any] | None = None
         self._last_control = {"steering": 0.0, "throttle": 0.0, "brake": 0.0}
+
+        # Live-mode spawn defaults are derived from the centreline instead of
+        # hard-coded bootstrap constants. This is deliberately conservative for
+        # Chunk 2: it gives BeamNGpy a plausible start pose while leaving exact
+        # scenario/spawn authoring as a later, track-specific TODO.
+        self._live_spawn_pos, self._live_spawn_rot_quat = self._default_spawn_pose()
+
+        if not self.use_mock:
+            self._connect_beamng()
 
     def _split_action(self, action: np.ndarray) -> dict[str, float]:
         """Convert the policy action into BeamNG-style control values."""
@@ -185,8 +216,8 @@ class BeamNGRacingEnv(gym.Env):
         self.previous_progress_m = 0.0
         self.stuck_steps = 0
 
-        # This currently returns a mock vehicle state when no BeamNG vehicle is
-        # connected. The method boundary is the future BeamNGpy reset hook.
+        # This returns a backend-normalised vehicle-state dictionary. Mock mode
+        # uses the safe toy dynamics; live mode polls the BeamNGpy vehicle.
         vehicle_state = self._reset_simulation(options=options)
         observation = self.observation_builder.build(vehicle_state)
 
@@ -205,7 +236,7 @@ class BeamNGRacingEnv(gym.Env):
                 if query.heading_error_rad is not None
                 else 0.0
             ),
-            "mock_simulation": self.vehicle is None,
+            "mock_simulation": self.use_mock,
         }
 
         self.last_observation = observation
@@ -258,7 +289,7 @@ class BeamNGRacingEnv(gym.Env):
                 "max_steps_reached": termination.max_steps_reached,
                 "lap_completed": termination.lap_completed,
             },
-            "mock_simulation": self.vehicle is None,
+            "mock_simulation": self.use_mock,
             "reward": reward_info,
         }
 
@@ -394,14 +425,27 @@ class BeamNGRacingEnv(gym.Env):
         return float(reward), reward_info
 
     def _reset_simulation(self, options: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Reset BeamNG or, for now, initialise the mock vehicle state."""
+        """Reset BeamNG or initialise the mock vehicle state."""
 
-        # Future BeamNGpy integration should reset/reload the scenario here,
-        # place the vehicle at the start pose, and return the first live state.
-        # Until self.vehicle is connected, this mock branch keeps development
-        # and smoke testing independent of a running simulator.
-        if self.vehicle is not None:
-            # Placeholder for future live BeamNG reset logic.
+        if not self.use_mock:
+            self._ensure_live_connected()
+
+            # Keep the car neutral during reset. BeamNG keeps the last control
+            # command until changed, so this prevents a stale throttle/brake
+            # input from affecting the first frame after reset.
+            self._last_control = {"steering": 0.0, "throttle": 0.0, "brake": 0.0}
+            self._apply_action(self._last_control)
+
+            # Scenario restart is the cleanest reset when BeamNGpy owns the
+            # scenario. If it is unavailable, fall back to teleport/recover
+            # below so live-mode experimentation can still proceed.
+            self._try_restart_live_scenario()
+            self._try_place_live_vehicle_at_start()
+
+            # Step a tiny amount after teleport/restart so the state sensor has
+            # a fresh frame to report. Deterministic stepping is configured in
+            # _connect_beamng() when BeamNG accepts that setting.
+            self._advance_simulation()
             return self._get_vehicle_state()
 
         options = options or {}
@@ -416,30 +460,52 @@ class BeamNGRacingEnv(gym.Env):
     def _apply_action(self, control: dict[str, float]) -> None:
         """Send a control command to BeamNG, or store it for the mock state."""
 
-        # Future BeamNGpy integration point:
-        #   self.vehicle.control(
-        #       steering=control["steering"],
-        #       throttle=control["throttle"],
-        #       brake=control["brake"],
-        #   )
-        # For the current mock path, store the command so _advance_simulation()
-        # can make the fake vehicle respond in a simple, deterministic way.
+        # Store the most recent command in both modes. In mock mode this drives
+        # the toy dynamics; in live mode it gives info/debug code one consistent
+        # place to inspect the last action sent to BeamNG.
         self._last_control = {
             "steering": float(control["steering"]),
             "throttle": float(control["throttle"]),
             "brake": float(control["brake"]),
         }
 
+        if not self.use_mock:
+            self._ensure_live_connected()
+            try:
+                self.vehicle.control(
+                    steering=self._last_control["steering"],
+                    throttle=self._last_control["throttle"],
+                    brake=self._last_control["brake"],
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to send control command to BeamNG vehicle "
+                    f"{self.vehicle_id!r}: {exc!r}"
+                ) from exc
+
     def _advance_simulation(self) -> None:
         """Advance BeamNG one control step, or move the mock vehicle."""
 
-        # Future BeamNGpy integration point:
-        #   self.beamng.step(1)
-        # The mock dynamics are intentionally simple; they only exist to prove
-        # the Gymnasium loop, observation builder, and reward accounting work.
-        if self.vehicle is not None:
+        if not self.use_mock:
+            self._ensure_live_connected()
+            try:
+                # BeamNGpy's deterministic step API assumes the simulator is
+                # paused. _connect_beamng() asks BeamNG for deterministic mode
+                # and pauses the sim; if a user changes that outside the env,
+                # this call may become realtime-ish again.
+                #
+                # TODO: expose the deterministic steps-per-second setting once
+                # training needs tighter control over policy frequency.
+                self.beamng.step(self.steps_per_action, wait=True)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to advance BeamNG simulation by "
+                    f"{self.steps_per_action} step(s): {exc!r}"
+                ) from exc
             return
 
+        # The mock dynamics are intentionally simple; they only exist to prove
+        # the Gymnasium loop, observation builder, and reward accounting work.
         throttle = self._last_control["throttle"]
         brake = self._last_control["brake"]
         steering = self._last_control["steering"]
@@ -470,28 +536,291 @@ class BeamNGRacingEnv(gym.Env):
     def _get_vehicle_state(self) -> dict[str, Any]:
         """Read the current BeamNG vehicle state, or return mock state."""
 
-        # Future BeamNGpy integration should poll sensors/electrics here and
-        # normalise the result into the dictionary shape expected by
-        # ObservationBuilder: at minimum position plus optional velocity/heading.
-        if self.vehicle is not None:
-            # Placeholder until the live vehicle-state schema is connected.
-            return self._mock_vehicle_state or self._mock_state_from_progress()
+        if not self.use_mock:
+            self._ensure_live_connected()
+            try:
+                # Every BeamNGpy Vehicle attaches a "state" sensor by default.
+                # Polling it refreshes vehicle.state with pos/dir/vel/rotation.
+                self.vehicle.sensors.poll("state")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to poll BeamNG vehicle state for {self.vehicle_id!r}: {exc!r}"
+                ) from exc
+
+            raw_state = dict(getattr(self.vehicle, "state", {}) or {})
+            raw_sensors = getattr(getattr(self.vehicle, "sensors", None), "data", {})
+            raw_payload: dict[str, Any] = {
+                "state": raw_state,
+                "sensors": raw_sensors,
+                **raw_state,
+            }
+
+            # BeamNGpy's state sensor normally provides:
+            #   pos: world position
+            #   dir: vehicle forward direction vector
+            #   vel: world velocity
+            # The extra nested paths keep this robust if a future sensor stack
+            # returns a wrapped dict such as {"sensors": {"state": {...}}}.
+            position_xyz = self._extract_live_xyz(
+                raw_payload,
+                (
+                    ("pos",),
+                    ("position",),
+                    ("state", "pos"),
+                    ("state", "position"),
+                    ("sensors", "state", "pos"),
+                    ("sensors", "state", "position"),
+                ),
+                name="position",
+            )
+            if position_xyz is None:
+                raise RuntimeError(
+                    "BeamNG live vehicle state did not include a usable position. "
+                    f"Available state keys: {sorted(raw_state.keys())!r}"
+                )
+
+            velocity_xyz = self._extract_live_xyz(
+                raw_payload,
+                (
+                    ("vel",),
+                    ("velocity",),
+                    ("state", "vel"),
+                    ("state", "velocity"),
+                    ("sensors", "state", "vel"),
+                    ("sensors", "state", "velocity"),
+                    ("sensors", "electrics", "vel"),
+                    ("sensors", "electrics", "velocity"),
+                    ("sensors", "electrics", "state", "vel"),
+                    ("sensors", "electrics", "state", "velocity"),
+                ),
+                name="velocity",
+                default=(0.0, 0.0, 0.0),
+            )
+
+            heading_rad = self._extract_live_float(
+                raw_payload,
+                (
+                    ("heading_rad",),
+                    ("state", "heading_rad"),
+                    ("sensors", "state", "heading_rad"),
+                ),
+            )
+            if heading_rad is None:
+                direction_xyz = self._extract_live_xyz(
+                    raw_payload,
+                    (
+                        ("dir",),
+                        ("direction",),
+                        ("state", "dir"),
+                        ("state", "direction"),
+                        ("sensors", "state", "dir"),
+                        ("sensors", "state", "direction"),
+                    ),
+                    name="direction",
+                    default=None,
+                )
+                if direction_xyz is not None:
+                    heading_rad = _heading_from_direction(direction_xyz)
+
+            if heading_rad is None:
+                # Last-resort fallback for early frames that have velocity but
+                # no direction vector. ObservationBuilder can also infer this,
+                # but live mode returns heading_rad explicitly to keep the env's
+                # state shape stable.
+                velocity_xy_norm = float(np.linalg.norm(np.asarray(velocity_xyz[:2])))
+                if velocity_xy_norm > 1.0e-9:
+                    heading_rad = _heading_from_direction(velocity_xyz)
+                else:
+                    # Neutral heading for a completely stationary/uninitialised
+                    # frame. This should be rare once the state sensor is live.
+                    heading_rad = 0.0
+
+            return {
+                "pos": position_xyz,
+                "velocity": velocity_xyz,
+                "heading_rad": float(heading_rad),
+            }
 
         if self._mock_vehicle_state is None:
             self._mock_vehicle_state = self._mock_state_from_progress()
         return self._mock_vehicle_state
 
     def close(self) -> None:
-        """Close any future BeamNG connection and clear local handles."""
+        """Close any BeamNG connection and clear local handles."""
 
-        # The placeholders are defensive: once BeamNGpy is wired in, close()
-        # should remain safe even if setup failed halfway through.
+        # This remains safe even if live setup failed halfway through. The
+        # BeamNGpy instance is created with quit_on_close=False, so close()
+        # disconnects this environment without shutting down the user's
+        # already-running BeamNG.tech process.
         beamng_close = getattr(self.beamng, "close", None)
         if callable(beamng_close):
             beamng_close()
 
         self.beamng = None
+        self.scenario = None
         self.vehicle = None
+
+    def _connect_beamng(self) -> None:
+        """Connect to BeamNG.tech and prepare a minimal live scenario.
+
+        BeamNGpy is imported here, not at module import time. That keeps mock
+        smoke tests and simple imports working on machines without BeamNGpy.
+        """
+
+        try:
+            from beamngpy import BeamNGpy, Scenario, Vehicle
+        except ImportError as exc:
+            raise ImportError(
+                "BeamNGpy must be installed to use BeamNGRacingEnv(use_mock=False). "
+                "Install the beamngpy package and run BeamNG.tech, or keep "
+                "use_mock=True for local smoke tests."
+            ) from exc
+
+        beamng = None
+        try:
+            # No beamng_home constructor parameter is added in Chunk 2, so live
+            # mode connects to an already-running BeamNG.tech instance instead
+            # of launching a new process. quit_on_close=False avoids killing
+            # that external process when env.close() is called.
+            beamng = BeamNGpy(
+                self.beamng_host,
+                self.beamng_port,
+                quit_on_close=False,
+            )
+            beamng.open(launch=False)
+
+            # Ask BeamNG for deterministic physics stepping. If this fails, the
+            # environment still connects, but step timing may depend on current
+            # simulator settings. The TODO in _advance_simulation marks the
+            # training-time configuration we will likely want later.
+            try:
+                beamng.settings.set_deterministic(60)
+                beamng.pause()
+            except Exception:
+                pass
+
+            # Minimal scenario authoring: treat scenario_name as the BeamNG
+            # level/map name for now. The generated scenario name is internal
+            # to this env instance.
+            #
+            # TODO: replace this with project-owned scenario files once the
+            # reset pose, vehicle model, traffic, and sensors are nailed down.
+            scenario = Scenario(
+                self.scenario_name,
+                f"beamng_rl_{self.vehicle_id}",
+                description="Minimal BeamNG RL live scenario",
+            )
+            vehicle = Vehicle(
+                self.vehicle_id,
+                model="sbr",
+                part_config="vehicles/sbr/track.pc",
+                license="RL",
+                color="Blue",
+            )
+            scenario.add_vehicle(
+                vehicle,
+                pos=self._live_spawn_pos,
+                rot_quat=self._live_spawn_rot_quat,
+            )
+            scenario.make(beamng)
+            beamng.scenario.load(scenario)
+            beamng.scenario.start()
+
+            # Re-pause after scenario start so beamng.step(...) controls the
+            # simulation clock as tightly as this minimal integration allows.
+            try:
+                beamng.pause()
+            except Exception:
+                pass
+
+            self.beamng = beamng
+            self.scenario = scenario
+            self.vehicle = vehicle
+
+            # Prime the state sensor. This catches a bad vehicle connection
+            # immediately instead of failing later inside the first RL step.
+            self.vehicle.sensors.poll("state")
+
+        except Exception as exc:
+            if beamng is not None:
+                close = getattr(beamng, "close", None)
+                if callable(close):
+                    close()
+            self.beamng = None
+            self.scenario = None
+            self.vehicle = None
+            raise RuntimeError(
+                "Failed to initialise live BeamNG mode at "
+                f"{self.beamng_host}:{self.beamng_port}. Start BeamNG.tech with "
+                "BeamNGpy communication enabled, confirm the level/scenario name "
+                f"{self.scenario_name!r} is available, or use use_mock=True. "
+                f"Original error: {exc!r}"
+            ) from exc
+
+    def _ensure_live_connected(self) -> None:
+        """Raise a clear error if live-mode methods are called without BeamNG."""
+
+        if self.beamng is None or self.vehicle is None:
+            raise RuntimeError(
+                "BeamNG live mode is not connected. Construct the environment "
+                "with use_mock=False and ensure _connect_beamng() completes."
+            )
+
+    def _try_restart_live_scenario(self) -> None:
+        """Best-effort live reset via BeamNGpy scenario restart."""
+
+        self._ensure_live_connected()
+        restart = getattr(getattr(self.beamng, "scenario", None), "restart", None)
+        if not callable(restart):
+            return
+
+        try:
+            restart()
+            try:
+                self.beamng.pause()
+            except Exception:
+                pass
+        except Exception:
+            # Scenario restart can fail if the user manually replaced/stopped
+            # the scenario. Teleport/recover below is still useful, so reset()
+            # does not fail solely because restart was unavailable.
+            pass
+
+    def _try_place_live_vehicle_at_start(self) -> None:
+        """Best-effort placement of the live vehicle at the centreline start."""
+
+        self._ensure_live_connected()
+
+        # Prefer Vehicle.teleport because it resets velocity and keeps the call
+        # tied to the connected vehicle object. BeamNGpy exposes an equivalent
+        # beamng.vehicles.teleport(...) path, so try that as a fallback.
+        try:
+            self.vehicle.teleport(
+                self._live_spawn_pos,
+                rot_quat=self._live_spawn_rot_quat,
+                reset=True,
+            )
+            return
+        except Exception:
+            pass
+
+        try:
+            self.beamng.vehicles.teleport(
+                self.vehicle,
+                self._live_spawn_pos,
+                rot_quat=self._live_spawn_rot_quat,
+                reset=True,
+            )
+            return
+        except Exception:
+            pass
+
+        recover = getattr(self.vehicle, "recover", None)
+        if callable(recover):
+            try:
+                recover()
+            except Exception:
+                pass
 
     def _mock_state_from_progress(self) -> dict[str, Any]:
         """Create a BeamNG-like state dictionary from mock lap progress."""
@@ -521,6 +850,73 @@ class BeamNGRacingEnv(gym.Env):
             "velocity": velocity_xyz.tolist(),
             "heading_rad": heading_rad,
         }
+
+    def _default_spawn_pose(
+        self,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+        """Derive a simple live-mode spawn pose from the first centreline point."""
+
+        start_point = np.asarray(
+            self.track.point_at_progress(0.0),
+            dtype=float,
+        ).reshape(-1)
+        if start_point.shape[0] < 3:
+            start_point = np.asarray([start_point[0], start_point[1], 0.0], dtype=float)
+
+        start_query = self.track.query(start_point[:3])
+        heading_rad = float(start_query.track_heading_rad)
+
+        # BeamNGpy wants quaternions as (x, y, z, w). This is a flat yaw-only
+        # quaternion, good enough for a generated scenario on a mostly level
+        # start segment. Track-authored scenarios should eventually provide an
+        # exact spawn quaternion.
+        half_yaw = 0.5 * heading_rad
+        rot_quat = (0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+        pos = tuple(float(value) for value in start_point[:3])
+        return pos, tuple(float(value) for value in rot_quat)
+
+    @staticmethod
+    def _extract_live_xyz(
+        payload: Mapping[str, Any],
+        paths: tuple[tuple[str, ...], ...],
+        *,
+        name: str,
+        default: tuple[float, float, float] | None = None,
+    ) -> list[float] | None:
+        """Extract a live BeamNG vector from several possible nested paths."""
+
+        for path in paths:
+            value = _nested_get(payload, path)
+            if value is None:
+                continue
+
+            try:
+                return _coerce_xyz_list(value, name=name)
+            except ValueError:
+                continue
+
+        if default is None:
+            return None
+        return [float(default[0]), float(default[1]), float(default[2])]
+
+    @staticmethod
+    def _extract_live_float(
+        payload: Mapping[str, Any],
+        paths: tuple[tuple[str, ...], ...],
+    ) -> float | None:
+        """Extract a finite float from several possible nested paths."""
+
+        for path in paths:
+            value = _nested_get(payload, path)
+            if value is None:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number):
+                return number
+        return None
 
     def _heading_from_state(self, vehicle_state: dict[str, Any]) -> float | None:
         """Extract a heading consistently with ObservationBuilder."""
@@ -561,6 +957,9 @@ def _smoke_test() -> None:
         repo_root / "data" / "hirochi_track" / "centreline_resampled_2_0m.json"
     )
 
+    # Mock mode is the default and intentionally remains the smoke-test path.
+    # To try live mode manually, start BeamNG.tech first and instantiate:
+    #   env = BeamNGRacingEnv(centreline_path, use_mock=False)
     env = BeamNGRacingEnv(centreline_path)
     print(f"Loaded track: {centreline_path}")
     print(f"Observation space: {env.observation_space}")
@@ -591,6 +990,51 @@ def _smoke_test() -> None:
             break
 
     env.close()
+
+
+def _heading_from_direction(direction: Any) -> float:
+    """Convert a BeamNG-style forward vector into an XY-plane heading angle."""
+
+    vector = np.asarray(direction, dtype=float).reshape(-1)
+    if vector.shape[0] < 2:
+        raise ValueError(f"direction must contain at least x and y, got {direction!r}")
+    return float(math.atan2(vector[1], vector[0]))
+
+
+def _nested_get(mapping: Mapping[str, Any], path: tuple[str, ...]) -> Any | None:
+    """Read a nested mapping path, returning None when any key is absent."""
+
+    current: Any = mapping
+    for key in path:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+        if current is None:
+            return None
+    return current
+
+
+def _coerce_xyz_list(value: Any, *, name: str) -> list[float]:
+    """Normalise BeamNG vector variants into a finite [x, y, z] list."""
+
+    if isinstance(value, Mapping):
+        if "x" not in value or "y" not in value:
+            raise ValueError(f"{name} mapping must contain at least x and y")
+        raw_values = [value["x"], value["y"], value.get("z", 0.0)]
+    else:
+        try:
+            raw_values = list(np.asarray(value, dtype=float).reshape(-1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a numeric vector") from exc
+        if len(raw_values) == 2:
+            raw_values.append(0.0)
+
+    vector = np.asarray(raw_values[:3], dtype=float).reshape(-1)
+    if vector.shape[0] != 3:
+        raise ValueError(f"{name} must contain 2 or 3 values, got {vector.shape[0]}")
+    if not np.all(np.isfinite(vector)):
+        raise ValueError(f"{name} must contain finite values, got {value!r}")
+    return [float(vector[0]), float(vector[1]), float(vector[2])]
 
 
 if __name__ == "__main__":
