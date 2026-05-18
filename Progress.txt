@@ -11,3 +11,10 @@
   - progress value
   - lateral error
 - Only then plug it into the Gym environment
+
+
+1. SB3 env checker
+2. tiny PPO mock training smoke test
+3. live random-policy rollout logger
+4. first very small PPO live training run
+5. reward/termination tuning based on logs
