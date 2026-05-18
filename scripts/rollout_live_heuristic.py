@@ -79,15 +79,16 @@ def heuristic_action(
     heading_error_rad = _info_float(info, "heading_error_rad")
     forward_speed_mps = _reward_float(info, "forward_speed_mps")
 
-    # This script is diagnostic: these signs assume the current env convention.
-    # If the live run steers away from the track, flip/tune these gains first.
-    steering = (-0.9 * heading_error_rad) + (-0.08 * lateral_error_m)
+    # This remains a diagnostic heuristic, not the final controller.
+    # The live sign sweep selected positive heading plus positive lateral
+    # correction; pos_heading_pos_lateral was the only case to avoid off-track.
+    steering = (0.7 * heading_error_rad) + (0.05 * lateral_error_m)
     steering = float(np.clip(steering, -1.0, 1.0))
 
     if abs(heading_error_rad) > 0.5 or abs(lateral_error_m) > 6.0:
-        throttle_brake = 0.2
+        throttle_brake = 0.1
     else:
-        throttle_brake = 0.45
+        throttle_brake = 0.25
 
     # Reserved for quick follow-up experiments such as speed caps or smoothing.
     _ = previous_action, forward_speed_mps
