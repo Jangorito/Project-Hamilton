@@ -46,15 +46,14 @@ from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv
 # ---------------------------------------------------------------------------
 # Change these to control run length. See the table in the module docstring.
 # ---------------------------------------------------------------------------
-TOTAL_TIMESTEPS = 3_300   # ~15 min at 3.7 policy steps/sec
+TOTAL_TIMESTEPS = 80_000  # ~6 hours at 3.7 policy steps/sec
 
-# How often to save a checkpoint (in timesteps). Lets you inspect the model
-# mid-run or recover if BeamNG crashes late in training.
-CHECKPOINT_EVERY = 1_000
+# How often to save a checkpoint (in timesteps).
+CHECKPOINT_EVERY = 8_000  # ~every 30 min
 
 # How many deterministic steps to roll out after training for comparison
 # against the heuristic baseline (~965 m).
-ROLLOUT_STEPS = 300
+ROLLOUT_STEPS = 500
 
 CENTRELINE_PATH = REPO_ROOT / "data" / "hirochi_track" / "centreline_resampled_2_0m.json"
 MODEL_DIR       = REPO_ROOT / "models"
@@ -67,6 +66,9 @@ CSV_FIELDS = [
     "action_throttle_brake",
     "reward",
     "episode_progress_m",
+    "pos_x",
+    "pos_y",
+    "pos_z",
     "progress_delta_m",
     "forward_speed_mps",
     "lateral_error_m",
@@ -113,12 +115,16 @@ def _build_csv_row(
 ) -> dict[str, Any]:
     reward_info = _as_mapping(info.get("reward"))
     progress_delta_m = _reward_float(reward_info, "progress_delta_m")
+    pos = info.get("vehicle_pos") or (0.0, 0.0, 0.0)
     return {
         "step": step_number,
         "action_steering": float(action[0]),
         "action_throttle_brake": float(action[1]),
         "reward": float(reward),
         "episode_progress_m": _info_float(info, "episode_progress_m"),
+        "pos_x": float(pos[0]),
+        "pos_y": float(pos[1]),
+        "pos_z": float(pos[2]),
         "progress_delta_m": progress_delta_m,
         "forward_speed_mps": _reward_float(reward_info, "forward_speed_mps"),
         "lateral_error_m": _info_float(info, "lateral_error_m", _reward_float(reward_info, "lateral_error_m")),
@@ -190,6 +196,7 @@ def main() -> None:
             vehicle_id="ego_vehicle",
             steps_per_action=15,
             max_episode_steps=500,
+            max_lateral_error_m=10.0,  # wider margin helps early exploration
             max_progress_delta_m=50.0,
             progress_jump_penalty=5.0,
         )
@@ -208,8 +215,8 @@ def main() -> None:
             "MlpPolicy",
             monitored_env,
             verbose=1,
-            n_steps=64,
-            batch_size=32,
+            n_steps=256,    # larger rollout buffer for better gradient estimates
+            batch_size=64,
             gamma=0.99,
             learning_rate=3e-4,
             tensorboard_log=str(LOG_DIR),
