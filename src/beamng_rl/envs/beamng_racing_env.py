@@ -800,9 +800,9 @@ class BeamNGRacingEnv(gym.Env):
                     self.beamng_host,
                     self.beamng_port,
                     home=str(self._resolved_beamng_home),
-                    # Toggle nogfx here, or pass nogfx=True when constructing
-                    # BeamNGRacingEnv to run without GPU rendering.
-                    nogfx=self.nogfx,
+                    # nogpu=True disables GPU rendering (beamngpy 1.35 API).
+                    # Controlled by nogfx=True on BeamNGRacingEnv — change it there.
+                    nogpu=self.nogfx,
                 )
                 beamng.open(launch=True)
             else:

@@ -9,7 +9,13 @@
       "Bash(Format-Table FullName)",
       "Bash(grep -E \"\\\\.py$|^d\")",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Jango\\\\workspace\\\\BeamNG\" -Filter \"*.py\" -File)",
-      "WebSearch"
+      "WebSearch",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\AppData\\\\Local\\\\BeamNG.drive\\\\\" -Name)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\AppData\\\\Local\\\\BeamNG\\\\BeamNG.tech\\\\current\\\\levels\" -Name)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\AppData\\\\Local\\\\BeamNG\\\\BeamNG.tech\\\\current\\\\levels\\\\hirochi_raceway\" -Name)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\AppData\\\\Local\\\\BeamNG\\\\BeamNG.tech\\\\current\\\\levels\\\\hirochi_raceway\\\\scenarios\" -Name)",
+      "Read(//c/Users/Jango/AppData/Local/BeamNG/BeamNG.tech/current/**)",
+      "PowerShell(netsh int ipv4 show dynamicport tcp)"
     ]
   }
 }
