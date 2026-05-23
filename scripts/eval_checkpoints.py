@@ -29,7 +29,7 @@ from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv
 CENTRELINE_PATH = REPO_ROOT / "data" / "hirochi_track" / "centreline_resampled_2_0m.json"
 LOG_DIR = REPO_ROOT / "logs"
 DEFAULT_CHECKPOINT_DIR = REPO_ROOT / "models" / "checkpoints"
-DEFAULT_EVAL_STEPS = 300
+DEFAULT_EVAL_STEPS = 500
 
 CSV_FIELDS = ["checkpoint", "timestep", "progress_m", "termination_reason", "progress_jumps"]
 

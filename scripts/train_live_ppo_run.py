@@ -236,7 +236,7 @@ def main() -> None:
         )
 
         print("\n=== Summary ===")
-        print(f"  Rollout progress : {progress_m:.1f} m  (heuristic baseline: ~965 m)")
+        print(f"  Rollout progress : {progress_m:.1f} m  (heuristic baseline: ~965 m / full lap: ~2158 m)")
         print(f"  Termination      : {reason}")
         print(f"  Progress jumps   : {jumps}")
         print(f"  Model            : {model_path}")

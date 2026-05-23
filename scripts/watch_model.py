@@ -76,7 +76,7 @@ def main() -> None:
 
         progress_m = float(info.get("episode_progress_m", 0.0))
         print(f"\n=== Episode Summary ===")
-        print(f"  Progress     : {progress_m:.1f} m  (heuristic baseline: ~965 m)")
+        print(f"  Progress     : {progress_m:.1f} m  (heuristic baseline: ~965 m / full lap: ~2158 m)")
         print(f"  Total reward : {total_reward:.2f}")
         print(f"  Positions    : {len(positions)} logged")
 
