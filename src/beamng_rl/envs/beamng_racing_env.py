@@ -120,6 +120,12 @@ class BeamNGRacingEnv(gym.Env):
         live_spawn_progress_m: float = 0.0,
         live_spawn_lateral_offset_m: float = 0.0,
         live_spawn_z_offset_m: float = 0.5,
+        # Set nogfx=True to run BeamNG with a null graphics backend (no GPU
+        # rendering). Speeds up physics throughput significantly — benchmark
+        # with True vs False before committing to a long training run.
+        # Camera-based sensors are unavailable in nogfx mode, but the 12-feature
+        # obs uses only the vehicle state sensor so nothing is lost here.
+        nogfx: bool = False,
     ) -> None:
         super().__init__()
 
@@ -191,6 +197,7 @@ class BeamNGRacingEnv(gym.Env):
             raise ValueError(
                 f"steps_per_action must be a positive integer, got {steps_per_action!r}"
             )
+        self.nogfx = bool(nogfx)
 
         # Runtime counters are reset in reset(), but initial values keep the
         # object inspectable immediately after construction.
@@ -793,6 +800,9 @@ class BeamNGRacingEnv(gym.Env):
                     self.beamng_host,
                     self.beamng_port,
                     home=str(self._resolved_beamng_home),
+                    # Toggle nogfx here, or pass nogfx=True when constructing
+                    # BeamNGRacingEnv to run without GPU rendering.
+                    nogfx=self.nogfx,
                 )
                 beamng.open(launch=True)
             else:
