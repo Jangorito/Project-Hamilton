@@ -63,12 +63,13 @@ class RewardConfig:
     """Tunable constants for the first inspectable racing reward."""
 
     progress_weight: float = 1.0
-    speed_weight: float = 0.02
+    speed_weight: float = 0.05
     heading_error_weight: float = 0.2
     lateral_error_weight: float = 0.1
     off_track_penalty: float = 10.0
     reverse_progress_penalty: float = 2.0
     stuck_step_penalty: float = 0.05
+    action_smoothness_weight: float = 0.1  # penalises |action_t - action_{t-1}| per dimension
 
 
 @dataclass
@@ -82,6 +83,8 @@ class TerminationResult:
     stuck: bool
     max_steps_reached: bool
     lap_completed: bool = False
+    damage: bool = False
+    wall_bash: bool = False
 
 
 class BeamNGRacingEnv(gym.Env):
@@ -126,6 +129,8 @@ class BeamNGRacingEnv(gym.Env):
         # Camera-based sensors are unavailable in nogfx mode, but the 12-feature
         # obs uses only the vehicle state sensor so nothing is lost here.
         nogfx: bool = False,
+        max_damage: float = 500.0,
+        wall_bash_steps_limit: int = 30,
     ) -> None:
         super().__init__()
 
@@ -198,6 +203,8 @@ class BeamNGRacingEnv(gym.Env):
                 f"steps_per_action must be a positive integer, got {steps_per_action!r}"
             )
         self.nogfx = bool(nogfx)
+        self.max_damage = float(max_damage)
+        self.wall_bash_steps_limit = int(wall_bash_steps_limit)
 
         # Runtime counters are reset in reset(), but initial values keep the
         # object inspectable immediately after construction.
@@ -207,6 +214,8 @@ class BeamNGRacingEnv(gym.Env):
         self.episode_start_progress_m = 0.0
         self.episode_progress_m = 0.0
         self.stuck_steps = 0
+        self._wall_bash_steps = 0
+        self._last_action = np.zeros(2, dtype=np.float32)
         self.last_observation: np.ndarray | None = None
         self.last_info: dict[str, Any] = {}
 
@@ -273,6 +282,8 @@ class BeamNGRacingEnv(gym.Env):
         self.episode_start_progress_m = 0.0
         self.episode_progress_m = 0.0
         self.stuck_steps = 0
+        self._wall_bash_steps = 0
+        self._last_action = np.zeros(2, dtype=np.float32)
 
         # This returns a backend-normalised vehicle-state dictionary. Mock mode
         # uses the safe toy dynamics; live mode polls the BeamNGpy vehicle.
@@ -325,6 +336,9 @@ class BeamNGRacingEnv(gym.Env):
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """Apply an action, advance the simulation, and return one RL step."""
 
+        action = np.asarray(action, dtype=np.float32).reshape(-1)
+        action_delta = action - self._last_action
+
         control = self._split_action(action)
         self._apply_action(control)
         self._advance_simulation()
@@ -335,13 +349,16 @@ class BeamNGRacingEnv(gym.Env):
         heading_rad = self._heading_from_state(vehicle_state)
         query = self.track.query(vehicle_state["pos"], vehicle_heading_rad=heading_rad)
 
-        reward, reward_info = self._compute_reward(query, vehicle_state)
+        reward, reward_info = self._compute_reward(query, vehicle_state, action_delta=action_delta)
+
+        self._last_action = action
 
         self.current_step += 1
 
         termination = self._check_termination(
             query_result=query,
             progress_delta_m=reward_info["progress_delta_m"],
+            vehicle_state=vehicle_state,
         )
         terminated = termination.terminated
         truncated = termination.truncated
@@ -375,7 +392,10 @@ class BeamNGRacingEnv(gym.Env):
                 "stuck": termination.stuck,
                 "max_steps_reached": termination.max_steps_reached,
                 "lap_completed": termination.lap_completed,
+                "damage": termination.damage,
+                "wall_bash": termination.wall_bash,
             },
+            "vehicle_damage": float(vehicle_state.get("damage", 0.0)),
             "mock_simulation": self.use_mock,
             "vehicle_pos": vehicle_state.get("pos"),
             "vehicle_velocity": vehicle_state.get("velocity"),
@@ -400,20 +420,35 @@ class BeamNGRacingEnv(gym.Env):
         self,
         query_result: TrackQueryResult,
         progress_delta_m: float,
+        vehicle_state: dict[str, Any] | None = None,
     ) -> TerminationResult:
         """Update episode counters and report why an episode should end."""
 
         # Stuck detection is based on low progress over repeated steps. The
         # reward function reports the per-step stuck penalty; this counter turns
         # repeated low-progress behaviour into an episode termination.
-        if progress_delta_m < self.min_progress_delta_m:
+        low_progress = progress_delta_m < self.min_progress_delta_m
+        if low_progress:
             self.stuck_steps += 1
         else:
             self.stuck_steps = 0
 
-        off_track = abs(float(query_result.signed_lateral_error)) > self.max_lateral_error_m
+        lateral_error_abs = abs(float(query_result.signed_lateral_error))
+        off_track = lateral_error_abs > self.max_lateral_error_m
         stuck = self.stuck_steps >= self.stuck_steps_limit
         max_steps_reached = self.current_step >= self.max_episode_steps
+
+        # Wall-bash: car pinned near the track boundary with no forward progress.
+        near_wall = lateral_error_abs > self.max_lateral_error_m * 0.7
+        if near_wall and low_progress:
+            self._wall_bash_steps += 1
+        else:
+            self._wall_bash_steps = 0
+        wall_bash = self._wall_bash_steps >= self.wall_bash_steps_limit
+
+        # Damage termination: only meaningful in live mode; mock has no physics.
+        damage_val = float((vehicle_state or {}).get("damage", 0.0))
+        damage_exceeded = (not self.use_mock) and (damage_val > self.max_damage)
 
         # TODO: Add lap completion based on episode_progress_m reaching
         # track.total_lap_length. Do not use raw progress_ratio for this because
@@ -421,12 +456,16 @@ class BeamNGRacingEnv(gym.Env):
         # boundary rather than raw progress zero.
         lap_completed = False
 
-        terminated = off_track or stuck or lap_completed
+        terminated = off_track or stuck or lap_completed or damage_exceeded or wall_bash
         truncated = max_steps_reached
 
         reason = "none"
         if off_track:
             reason = "off_track"
+        elif damage_exceeded:
+            reason = "damage"
+        elif wall_bash:
+            reason = "wall_bash"
         elif stuck:
             reason = "stuck"
         elif lap_completed:
@@ -442,12 +481,15 @@ class BeamNGRacingEnv(gym.Env):
             stuck=bool(stuck),
             max_steps_reached=bool(max_steps_reached),
             lap_completed=bool(lap_completed),
+            damage=bool(damage_exceeded),
+            wall_bash=bool(wall_bash),
         )
 
     def _compute_reward(
         self,
         query_result: TrackQueryResult,
         vehicle_state: dict[str, Any],
+        action_delta: np.ndarray | None = None,
     ) -> tuple[float, dict[str, Any]]:
         """Compute the first dense, inspectable racing reward.
 
@@ -504,6 +546,12 @@ class BeamNGRacingEnv(gym.Env):
             self.progress_jump_penalty if progress_jump_detected else 0.0
         )
 
+        smoothness_penalty = (
+            float(np.sum(np.abs(action_delta))) * config.action_smoothness_weight
+            if action_delta is not None
+            else 0.0
+        )
+
         reward = (
             progress_reward
             + speed_reward
@@ -513,6 +561,7 @@ class BeamNGRacingEnv(gym.Env):
             - reverse_progress_penalty
             - stuck_penalty
             - progress_jump_penalty_value
+            - smoothness_penalty
         )
 
         reward_info = {
@@ -534,6 +583,7 @@ class BeamNGRacingEnv(gym.Env):
             "reverse_progress_penalty": float(reverse_progress_penalty),
             "stuck_penalty": float(stuck_penalty),
             "progress_jump_penalty": float(progress_jump_penalty_value),
+            "smoothness_penalty": float(smoothness_penalty),
             "total_reward": float(reward),
         }
         return float(reward), reward_info
@@ -655,11 +705,16 @@ class BeamNGRacingEnv(gym.Env):
             try:
                 # Every BeamNGpy Vehicle attaches a "state" sensor by default.
                 # Polling it refreshes vehicle.state with pos/dir/vel/rotation.
-                self.vehicle.sensors.poll("state")
+                self.vehicle.sensors.poll("state", "damage")
             except Exception as exc:
                 raise RuntimeError(
                     f"Failed to poll BeamNG vehicle state for {self.vehicle_id!r}: {exc!r}"
                 ) from exc
+
+            try:
+                damage_val = float(self.vehicle.sensors["damage"].get("damage", 0.0))
+            except Exception:
+                damage_val = 0.0
 
             raw_state = dict(getattr(self.vehicle, "state", {}) or {})
             raw_sensors = getattr(getattr(self.vehicle, "sensors", None), "data", {})
@@ -753,6 +808,7 @@ class BeamNGRacingEnv(gym.Env):
                 "pos": position_xyz,
                 "velocity": velocity_xyz,
                 "heading_rad": float(heading_rad),
+                "damage": damage_val,
             }
 
         if self._mock_vehicle_state is None:
@@ -832,6 +888,10 @@ class BeamNGRacingEnv(gym.Env):
                 vehicle_id=self.vehicle_id,
                 scenario_instance_name=f"beamng_rl_{self.vehicle_id}",
             )
+
+            from beamngpy.sensors import Damage
+            vehicle.attach_sensor("damage", Damage())
+
             beamng.scenario.load(scenario)
             self._try_hide_live_hud(beamng)
             beamng.scenario.start()
