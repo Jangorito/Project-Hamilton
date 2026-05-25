@@ -71,6 +71,14 @@ class RewardConfig:
     stuck_step_penalty: float = 0.05
     action_smoothness_weight: float = 0.1  # penalises |action_t - action_{t-1}| per dimension
 
+    # Curvature-aware speed target. Penalises carrying excess speed into corners.
+    # target_speed = clamp(base - scale * max_curvature_ahead, min, base)
+    # penalty = weight * max(0, forward_speed - target_speed)
+    curvature_overspeed_weight: float = 0.15    # turn it up if it's still not braking enough
+    curvature_target_speed_base: float = 35.0   # m/s — target on a straight
+    curvature_target_speed_min: float = 12.0    # m/s — floor for tight hairpins
+    curvature_speed_scale: float = 700.0        # m/s per (1/m) of curvature
+
 
 @dataclass
 class TerminationResult:
@@ -552,6 +560,18 @@ class BeamNGRacingEnv(gym.Env):
             else 0.0
         )
 
+        lap_progress = float(query_result.lap_progress)
+        max_curvature_ahead = max(
+            self.track.curvature_at(lap_progress + d) for d in (20.0, 40.0, 80.0)
+        )
+        target_speed = max(
+            config.curvature_target_speed_min,
+            config.curvature_target_speed_base - config.curvature_speed_scale * max_curvature_ahead,
+        )
+        curvature_overspeed_penalty = (
+            max(0.0, forward_speed_mps - target_speed) * config.curvature_overspeed_weight
+        )
+
         reward = (
             progress_reward
             + speed_reward
@@ -562,6 +582,7 @@ class BeamNGRacingEnv(gym.Env):
             - stuck_penalty
             - progress_jump_penalty_value
             - smoothness_penalty
+            - curvature_overspeed_penalty
         )
 
         reward_info = {
@@ -584,6 +605,9 @@ class BeamNGRacingEnv(gym.Env):
             "stuck_penalty": float(stuck_penalty),
             "progress_jump_penalty": float(progress_jump_penalty_value),
             "smoothness_penalty": float(smoothness_penalty),
+            "max_curvature_ahead": float(max_curvature_ahead),
+            "curvature_target_speed": float(target_speed),
+            "curvature_overspeed_penalty": float(curvature_overspeed_penalty),
             "total_reward": float(reward),
         }
         return float(reward), reward_info
