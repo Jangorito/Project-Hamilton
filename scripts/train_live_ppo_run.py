@@ -8,8 +8,12 @@ pipeline. Adjust TOTAL_TIMESTEPS to taste:
   ~55_000 =>  ~4 hours
   100_000 =>  ~7.5 hours
 
+By default resumes from the latest checkpoint in models/checkpoints/.
+Pass --fresh to start over with a new model.
+
 Usage:
-    python scripts/train_live_ppo_run.py
+    python scripts/train_live_ppo_run.py            # resume latest checkpoint
+    python scripts/train_live_ppo_run.py --fresh    # start from scratch
 
 TensorBoard:
     tensorboard --logdir logs/live_training
@@ -17,7 +21,9 @@ TensorBoard:
 
 from __future__ import annotations
 
+import argparse
 import csv
+import re
 import sys
 from collections.abc import Mapping
 from datetime import datetime
@@ -172,10 +178,31 @@ def _run_deterministic_rollout(
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+def _parse_timestep(path: Path) -> int:
+    match = re.search(r"_(\d+)_steps", path.stem)
+    return int(match.group(1)) if match else 0
+
+
+def _find_latest_checkpoint() -> Path | None:
+    checkpoints = list(CHECKPOINT_DIR.glob("*.zip"))
+    return max(checkpoints, key=_parse_timestep) if checkpoints else None
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Train PPO on BeamNG Hirochi Raceway.")
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="Start from scratch instead of resuming the latest checkpoint.",
+    )
+    args = parser.parse_args()
+
     if not CENTRELINE_PATH.is_file():
         raise FileNotFoundError(f"Centreline JSON not found: {CENTRELINE_PATH}")
 
@@ -185,6 +212,8 @@ def main() -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_path   = MODEL_DIR / f"live_ppo_{timestamp}.zip"
     rollout_path = LOG_DIR   / f"live_ppo_rollout_{timestamp}.csv"
+
+    resume_path = None if args.fresh else _find_latest_checkpoint()
 
     env: BeamNGRacingEnv | None = None
     try:
@@ -211,16 +240,25 @@ def main() -> None:
             verbose=1,
         )
 
-        model = PPO(
-            "MlpPolicy",
-            monitored_env,
-            verbose=1,
-            n_steps=256,    # larger rollout buffer for better gradient estimates
-            batch_size=64,
-            gamma=0.99,
-            learning_rate=3e-4,
-            tensorboard_log=str(LOG_DIR),
-        )
+        if resume_path is not None:
+            print(f"Resuming from checkpoint: {resume_path.name}")
+            model = PPO.load(
+                str(resume_path),
+                env=monitored_env,
+                tensorboard_log=str(LOG_DIR),
+            )
+        else:
+            print("Starting fresh model.")
+            model = PPO(
+                "MlpPolicy",
+                monitored_env,
+                verbose=1,
+                n_steps=256,
+                batch_size=64,
+                gamma=0.99,
+                learning_rate=3e-4,
+                tensorboard_log=str(LOG_DIR),
+            )
 
         print(f"Training for {TOTAL_TIMESTEPS} timesteps (~15 min)...")
         print(f"TensorBoard: tensorboard --logdir {LOG_DIR}")
