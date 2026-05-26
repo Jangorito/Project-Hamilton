@@ -31,7 +31,32 @@ The training PC (JANGO-DESKTOP) is accessible over Tailscale VPN.
 
 ---
 
-## Launching Training
+## Web Launcher GUI
+
+The preferred way to control training. Run the Flask server on Jango, then open a browser.
+
+### Start the launcher (on Jango via SSH)
+
+```powershell
+cd C:\Users\Jango\workspace\BeamNG
+.\venv\Scripts\python.exe scripts\launcher\app.py
+```
+
+### Access from Student machine
+
+**Same network (Tailscale):**
+Open `http://100.120.21.69:5000` in your browser.
+
+**SSH tunnel (if direct access is blocked):**
+```powershell
+# Run in a Student machine terminal — keep this session open
+ssh -L 5000:localhost:5000 jango@100.120.21.69
+```
+Then open `http://localhost:5000`.
+
+---
+
+## Launching Training (CLI fallback)
 
 All training is launched via the PowerShell launcher script. Always `cd` to the repo root first.
 
@@ -43,12 +68,13 @@ cd C:\Users\Jango\workspace\BeamNG
 
 | Intent | Command |
 |--------|---------|
-| Resume latest run | `powershell -ExecutionPolicy Bypass -File .\scripts\launch_training.ps1` |
-| Resume + stream to Twitch | `powershell -ExecutionPolicy Bypass -File .\scripts\launch_training.ps1 -Stream` |
-| Fresh named run | `powershell -ExecutionPolicy Bypass -File .\scripts\launch_training.ps1 -Fresh -RunName v4_test` |
-| Fresh run + stream | `powershell -ExecutionPolicy Bypass -File .\scripts\launch_training.ps1 -Fresh -RunName v4_test -Stream` |
-| Check if training is running | `powershell -ExecutionPolicy Bypass -File .\scripts\launch_training.ps1 -Status` |
-| Follow live log output | `powershell -ExecutionPolicy Bypass -File .\scripts\launch_training.ps1 -Tail` |
+| Resume latest run | `powershell -ExecutionPolicy Bypass -File .\scripts\train\launch_training.ps1` |
+| Resume + stream to Twitch | `powershell -ExecutionPolicy Bypass -File .\scripts\train\launch_training.ps1 -Stream` |
+| Fresh named run | `powershell -ExecutionPolicy Bypass -File .\scripts\train\launch_training.ps1 -Fresh -RunName v4_test` |
+| Fresh run + stream | `powershell -ExecutionPolicy Bypass -File .\scripts\train\launch_training.ps1 -Fresh -RunName v4_test -Stream` |
+| Check if training is running | `powershell -ExecutionPolicy Bypass -File .\scripts\train\launch_training.ps1 -Status` |
+| Follow live log output | `powershell -ExecutionPolicy Bypass -File .\scripts\train\launch_training.ps1 -Tail` |
+| Launch via scheduled task | `schtasks /run /tn "HamiltonTraining"` |
 
 Training runs **detached** — closing the SSH session will not kill it.
 
@@ -63,13 +89,13 @@ The launcher passes these through to `train_live_ppo_run.py`:
 | `--fresh` | Start a new run from scratch (fails if run name already exists) |
 | `--run-name NAME` | Specify run name (omit to auto-resume latest or be prompted) |
 
-Tunable constants (edit `scripts/train_live_ppo_run.py` directly):
+Approximate training times at default pace (~13.5 steps/sec on Jango):
 
-| Constant | Default | Approx time |
-|----------|---------|-------------|
-| `TOTAL_TIMESTEPS = 27_000` | — | ~2 hours |
-| `TOTAL_TIMESTEPS = 55_000` | — | ~4 hours |
-| `TOTAL_TIMESTEPS = 100_000` | — | ~7.5 hours |
+| Steps | Approx time |
+|-------|-------------|
+| 27,000 | ~2 hours |
+| 55,000 | ~4 hours |
+| 100,000 | ~7.5 hours |
 
 ---
 
@@ -96,14 +122,54 @@ If no password is set in OBS, skip this step.
 
 ```powershell
 # From inside the repo, with venv active
-python scripts\obs_control.py start
-python scripts\obs_control.py stop
-python scripts\obs_control.py status
+python scripts\env\obs_control.py start
+python scripts\env\obs_control.py stop
+python scripts\env\obs_control.py status
+python scripts\env\obs_control.py screenshot
 ```
 
 With a password:
 ```powershell
-python scripts\obs_control.py start --password your-password
+python scripts\env\obs_control.py start --password your-password
+```
+
+---
+
+## Scheduled Tasks (Jango)
+
+These Windows scheduled tasks exist on JANGO-DESKTOP and can be triggered over SSH without needing an interactive session.
+
+| Task name | What it does |
+|-----------|-------------|
+| `HamiltonTraining` | Runs `launch_training.ps1 -Stream` in an interactive (Session 1) desktop process — required for BeamNG GPU rendering |
+| `BeamNGDirect` | Launches BeamNG standalone for diagnostics (no training) |
+| `WakeScreen` | Sends a mouse input event to wake a sleeping monitor |
+| `WakeScreen2` | Alternative wake task using `SendInput` — use this one if `WakeScreen` doesn't work |
+
+### Run a task remotely
+
+```powershell
+schtasks /run /tn "HamiltonTraining"
+schtasks /run /tn "WakeScreen2"
+schtasks /run /tn "BeamNGDirect"
+```
+
+> **Why scheduled tasks?** SSH sessions land in Windows Session 0 (no GPU rendering, no visible window). Scheduled tasks with the `/it` flag run in Session 1 (the interactive desktop), which BeamNG and OBS require.
+
+---
+
+## Git — Sync Between Machines
+
+```powershell
+# Pull latest changes onto Jango (run via SSH)
+cd C:\Users\Jango\workspace\BeamNG
+git pull
+
+# Push changes from Student machine
+cd C:\Users\Student\Workspace\Project-Hamilton
+git add <files>
+git commit -m "message"
+git push
 ```
 
 ---
@@ -123,7 +189,7 @@ Logs from remote-triggered runs are saved to `logs/remote/`.
 ## Troubleshooting
 
 **"The argument to -File does not exist"**
-You are not in the repo directory. Run `cd C:\Users\Jango\workspace\BeamNG` first.
+You are not in the repo directory, or using the old path. Run `cd C:\Users\Jango\workspace\BeamNG` first. Script is now at `scripts\train\launch_training.ps1`.
 
 **"Execution policy" error**
 Use `powershell -ExecutionPolicy Bypass -File .\scripts\...` as shown above, or run this once on the PC:
