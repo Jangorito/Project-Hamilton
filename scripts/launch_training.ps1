@@ -7,8 +7,8 @@
     # Resume latest run in background
     .\scripts\launch_training.ps1
 
-    # Start a fresh run
-    .\scripts\launch_training.ps1 -Fresh -RunName v3_test
+    # Start a fresh run and stream to Twitch via OBS
+    .\scripts\launch_training.ps1 -Fresh -RunName v3_test -Stream
 
     # Start and follow output live
     .\scripts\launch_training.ps1 -Fresh -RunName v3_test -Follow
@@ -21,10 +21,12 @@
 #>
 param(
     [switch]$Fresh,
-    [string]$RunName   = "",
+    [string]$RunName      = "",
     [switch]$Follow,
     [switch]$Status,
-    [switch]$Tail
+    [switch]$Tail,
+    [switch]$Stream,
+    [int]   $OBSPort      = 4455
 )
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -98,8 +100,21 @@ if (-not (Test-Path $LogLink)) {
     $LogFile | Out-File $LogLink -Encoding utf8
 }
 
+# ── OBS: start stream ────────────────────────────────────────────────────────
+$OBSArgs = "scripts\obs_control.py --port $OBSPort"
+if ($env:OBS_WEBSOCKET_PASSWORD) { $OBSArgs += " --password $env:OBS_WEBSOCKET_PASSWORD" }
+
+if ($Stream) {
+    Write-Host "Starting OBS stream..."
+    & $PythonExe $OBSArgs.Split(" ") start
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Warning: could not start OBS stream - training will still launch."
+    }
+}
+
 # ── Launch detached powershell that runs python and captures both streams ─────
-$inner = "Set-Location '$RepoRoot'; & '$PythonExe' $TrainArgs 2>&1 | Tee-Object -FilePath '$LogFile'"
+$stopOBS = if ($Stream) { "& '$PythonExe' $OBSArgs stop" } else { "" }
+$inner = "Set-Location '$RepoRoot'; & '$PythonExe' $TrainArgs 2>&1 | Tee-Object -FilePath '$LogFile'; $stopOBS"
 $proc  = Start-Process powershell `
     -ArgumentList "-NonInteractive", "-Command", $inner `
     -WindowStyle Hidden `
@@ -110,13 +125,14 @@ $proc.Id | Out-File $PidFile -Encoding utf8
 Write-Host "Training started."
 Write-Host "  PID : $($proc.Id)"
 Write-Host "  Log : $LogFile"
+if ($Stream) { Write-Host "  OBS stream will stop automatically when training finishes." }
 Write-Host ""
 Write-Host "Commands:"
 Write-Host "  .\scripts\launch_training.ps1 -Status   # check if running"
 Write-Host "  .\scripts\launch_training.ps1 -Tail     # follow output"
 
 if ($Follow) {
-    Write-Host "`nFollowing output (Ctrl+C to stop watching — training keeps running)`n"
+    Write-Host "`nFollowing output (Ctrl+C to stop watching - training keeps running)`n"
     Start-Sleep -Seconds 1
     Get-Content $LogFile -Wait
 }

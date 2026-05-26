@@ -19,7 +19,9 @@
       "Bash(Sort-Object Name)",
       "PowerShell(Get-ChildItem \"c:\\\\Users\\\\Jango\\\\workspace\\\\BeamNG\\\\models\" | Where-Object { $_.Extension -eq \".zip\" })",
       "Bash(python3 -c ' *)",
-      "PowerShell(tailscale ip -4)"
+      "PowerShell(tailscale ip -4)",
+      "Bash(./venv/Scripts/python.exe -c \"import obsws_python\")",
+      "Bash(./venv/Scripts/pip.exe install *)"
     ]
   }
 }
