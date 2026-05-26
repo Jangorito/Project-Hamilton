@@ -111,7 +111,7 @@ def is_process_running(name: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Control OBS streaming via WebSocket.")
-    parser.add_argument("action", choices=["start", "stop", "status", "watch", "spotlight", "game-capture"])
+    parser.add_argument("action", choices=["start", "stop", "status", "watch", "spotlight", "game-capture", "display-capture"])
     parser.add_argument("--host",     default="localhost")
     parser.add_argument("--port",     type=int, default=4455)
     parser.add_argument("--password", default="",
@@ -147,9 +147,16 @@ def main() -> None:
         input_name = f"{exe.replace('.exe', '')}_game_capture"
         try:
             cl.create_input(scene, input_name, "game_capture",
-                            {"mode": "specific_window", "window": f"::{exe}"}, True)
-            print(f"Added game capture source '{input_name}' to scene '{scene}'.")
-            print("Move/resize it in OBS to replace the old window capture source.")
+                            {"mode": "any_fullscreen"}, True)
+            print(f"Added game capture source '{input_name}' (any fullscreen) to scene '{scene}'.")
+        except Exception as exc:
+            print(f"Failed: {exc}")
+
+    elif args.action == "display-capture":
+        scene = cl.get_current_program_scene().current_program_scene_name
+        try:
+            cl.create_input(scene, "Display_Capture", "monitor_capture", {"monitor": 0}, True)
+            print(f"Added display capture source to scene '{scene}'.")
         except Exception as exc:
             print(f"Failed: {exc}")
 
