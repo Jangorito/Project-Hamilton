@@ -113,8 +113,9 @@ if ($Stream) {
 }
 
 # ── Launch detached powershell that runs python and captures both streams ─────
-$stopOBS = if ($Stream) { "& '$PythonExe' $OBSArgs stop" } else { "" }
-$inner = "Set-Location '$RepoRoot'; & '$PythonExe' $TrainArgs 2>&1 | Tee-Object -FilePath '$LogFile'; $stopOBS"
+$watchOBS = if ($Stream) { "Start-Process '$PythonExe' -ArgumentList '$OBSArgs watch'.Split(' ') -WindowStyle Hidden; " } else { "" }
+$stopOBS  = if ($Stream) { "; & '$PythonExe' $OBSArgs stop" } else { "" }
+$inner = "Set-Location '$RepoRoot'; ${watchOBS}& '$PythonExe' $TrainArgs 2>&1 | Tee-Object -FilePath '$LogFile'${stopOBS}"
 $proc  = Start-Process powershell `
     -ArgumentList "-NonInteractive", "-Command", $inner `
     -WindowStyle Hidden `
