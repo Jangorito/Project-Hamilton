@@ -21,7 +21,10 @@
       "Bash(python3 -c ' *)",
       "PowerShell(tailscale ip -4)",
       "Bash(./venv/Scripts/python.exe -c \"import obsws_python\")",
-      "Bash(./venv/Scripts/pip.exe install *)"
+      "Bash(./venv/Scripts/pip.exe install *)",
+      "PowerShell(Get-Process | Where-Object { $_.Name -match \"beam|beamng\" -or $_.MainWindowTitle -match \"beam\" } | Select-Object Id, Name, MainWindowTitle, MainWindowHandle)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
