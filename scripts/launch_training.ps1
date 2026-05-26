@@ -21,12 +21,13 @@
 #>
 param(
     [switch]$Fresh,
-    [string]$RunName      = "",
+    [string]$RunName        = "",
     [switch]$Follow,
     [switch]$Status,
     [switch]$Tail,
     [switch]$Stream,
-    [int]   $OBSPort      = 4455
+    [int]   $OBSPort        = 4455,
+    [string]$BeamNGProcess  = "BeamNG.x64"
 )
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -35,7 +36,14 @@ $PidFile  = Join-Path $LogDir "training.pid"
 $LogLink  = Join-Path $LogDir "latest.log"
 
 function Get-LatestLog {
-    if (Test-Path $LogLink) { return $LogLink }
+    if (Test-Path $LogLink) {
+        $item = Get-Item $LogLink -ErrorAction SilentlyContinue
+        # Real symlink — resolve to target
+        if ($item -and $item.LinkType) { return $item.Target }
+        # Plain-text fallback written when symlink creation failed
+        $content = (Get-Content $LogLink -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($content -and (Test-Path $content)) { return $content }
+    }
     $logs = Get-ChildItem $LogDir -Filter "training_*.log" -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending
     if ($logs) { return $logs[0].FullName }
@@ -101,7 +109,7 @@ if (-not (Test-Path $LogLink)) {
 }
 
 # ── OBS: start stream ────────────────────────────────────────────────────────
-$OBSArgs = "scripts\obs_control.py --port $OBSPort"
+$OBSArgs = "scripts\obs_control.py --port $OBSPort --process $BeamNGProcess"
 if ($env:OBS_WEBSOCKET_PASSWORD) { $OBSArgs += " --password $env:OBS_WEBSOCKET_PASSWORD" }
 
 if ($Stream) {
