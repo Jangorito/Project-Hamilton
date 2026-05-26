@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Hamilton</title>
+<style>
+  /* ── Reset & base ─────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #0d1117;
+    --surface:    #161b22;
+    --surface2:   #1c2128;
+    --border:     #21262d;
+    --border2:    #30363d;
+    --text:       #e6edf3;
+    --muted:      #8b949e;
+    --blue:       #388bfd;
+    --blue-dim:   #1f4080;
+    --green:      #3fb950;
+    --green-dim:  #1a4020;
+    --red:        #f85149;
+    --red-dim:    #4a1010;
+    --yellow:     #d29922;
+    --yellow-dim: #3d2a00;
+    --radius:     6px;
+    --font-mono:  'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* ── Layout ───────────────────────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 100vh;
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 0;
+    height: calc(100vh - 64px);
+    overflow: hidden;
+  }
+
+  /* ── Header ───────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    height: 64px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .header-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+  }
+
+  .header-logo-icon {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, var(--blue), #7c3aed);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    color: white;
+    font-weight: 700;
+  }
+
+  .header-pills {
+    display: flex;
+    gap: 6px;
+    flex: 1;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+    transition: all 0.25s ease;
+  }
+
+  .pill::before {
+    content: '';
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .pill-active   { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  .pill-active::before { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .pill-inactive { background: transparent; border-color: var(--border2); color: var(--muted); }
+  .pill-inactive::before { background: var(--border2); }
+
+  .header-run-info {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  /* ── Panels ───────────────────────────────────────────────── */
+  .panel {
+    padding: 20px;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+
+  .panel-right {
+    border-right: none;
+    background: var(--bg);
+  }
+
+  .panel-left {
+    background: var(--surface);
+  }
+
+  .panel-section {
+    margin-bottom: 22px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  /* ── Radio options ────────────────────────────────────────── */
+  .radio-group { display: flex; flex-direction: column; gap: 6px; }
+  .radio-group-inline { flex-direction: row; flex-wrap: wrap; }
+
+  .radio-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--surface2);
+  }
+
+  .radio-option:hover { border-color: var(--border2); }
+
+  .radio-option input[type="radio"] { display: none; }
+
+  .radio-option.selected {
+    border-color: var(--blue);
+    background: var(--blue-dim);
+  }
+
+  .radio-dot {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--border2);
+    flex-shrink: 0;
+    margin-top: 1px;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s;
+  }
+
+  .radio-option.selected .radio-dot {
+    border-color: var(--blue);
+    background: var(--blue);
+  }
+
+  .radio-option.selected .radio-dot::after {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: white;
+  }
+
+  .radio-name { font-weight: 500; font-size: 13px; }
+  .radio-sub  { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+  .radio-group-inline .radio-option {
+    flex: 1;
+    justify-content: center;
+    text-align: center;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  .radio-group-inline .radio-dot { margin-top: 0; }
+
+  /* ── Run config ───────────────────────────────────────────── */
+  .run-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .select, .input {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .select:focus, .input:focus { border-color: var(--blue); }
+  .select option { background: var(--surface2); }
+
+  /* ── Slider ───────────────────────────────────────────────── */
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  input[type="range"] {
+    flex: 1;
+    -webkit-appearance: none;
+    height: 4px;
+    background: var(--border2);
+    border-radius: 2px;
+    outline: none;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--blue);
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(56,139,253,0.5);
+  }
+
+  .slider-readout {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .slider-steps { font-weight: 600; color: var(--text); }
+  .slider-time  { color: var(--muted); font-size: 11px; }
+
+  /* ── Toggle ───────────────────────────────────────────────── */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .toggle-switch {
+    position: relative;
+    width: 36px; height: 20px;
+    background: var(--border2);
+    border-radius: 10px;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform 0.2s, background 0.2s;
+  }
+
+  input[type="checkbox"]:checked + .toggle-switch {
+    background: var(--blue-dim);
+    border: 1px solid var(--blue);
+  }
+
+  input[type="checkbox"]:checked + .toggle-switch::after {
+    transform: translateX(16px);
+    background: var(--blue);
+  }
+
+  input[type="checkbox"] { display: none; }
+
+  /* ── Buttons ──────────────────────────────────────────────── */
+  .btn {
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    outline: none;
+    white-space: nowrap;
+  }
+
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-primary {
+    background: var(--blue);
+    color: white;
+    border-color: var(--blue);
+    width: 100%;
+    padding: 10px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .btn-primary:hover:not(:disabled) { background: #4d9fff; }
+
+  .btn-danger {
+    background: transparent;
+    color: var(--red);
+    border-color: var(--red);
+    width: 100%;
+  }
+  .btn-danger:hover:not(:disabled) { background: var(--red-dim); }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--muted);
+    border-color: var(--border2);
+    width: 100%;
+  }
+  .btn-secondary:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+
+  .btn-sm {
+    padding: 5px 12px;
+    font-size: 12px;
+    background: var(--surface2);
+    color: var(--muted);
+    border-color: var(--border);
+  }
+  .btn-sm:hover:not(:disabled) { color: var(--text); border-color: var(--border2); }
+
+  .btn-warn {
+    background: transparent;
+    color: var(--yellow);
+    border-color: var(--yellow);
+    padding: 5px 12px;
+    font-size: 12px;
+  }
+  .btn-warn:hover:not(:disabled) { background: var(--yellow-dim); }
+
+  .btn-group { display: flex; flex-direction: column; gap: 8px; }
+
+  /* ── Screenshot ───────────────────────────────────────────── */
+  .screenshot-wrap {
+    position: relative;
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    aspect-ratio: 16/9;
+    margin-bottom: 12px;
+  }
+
+  .screenshot-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  .screenshot-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.7);
+    color: var(--muted);
+    font-size: 13px;
+    gap: 8px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .screenshot-overlay.visible { opacity: 1; }
+  .screenshot-overlay .no-signal { font-size: 32px; line-height: 1; }
+
+  /* ── Progress bar ─────────────────────────────────────────── */
+  .progress-wrap {
+    margin-bottom: 14px;
+  }
+
+  .progress-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 5px;
+    font-family: var(--font-mono);
+  }
+
+  .progress-track {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--blue), #7c3aed);
+    border-radius: 3px;
+    transition: width 1s ease;
+    width: 0%;
+  }
+
+  /* ── Log ──────────────────────────────────────────────────── */
+  .log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  .log-live-dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .live-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+
+  .live-dot.active {
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+  }
+
+  .log-container {
+    height: 220px;
+    overflow-y: auto;
+    background: #010409;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+  }
+
+  .log-line { color: var(--muted); word-break: break-all; }
+  .log-line:last-child { color: var(--text); }
+
+  /* ── Damage override ──────────────────────────────────────── */
+  .damage-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .damage-input-wrap {
+    position: relative;
+    flex: 1;
+  }
+
+  .damage-input-wrap input {
+    padding-right: 40px;
+  }
+
+  .damage-unit {
+    position: absolute;
+    right: 10px; top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: var(--muted);
+    pointer-events: none;
+  }
+
+  .damage-meta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 5px;
+    font-family: var(--font-mono);
+    min-height: 16px;
+  }
+
+  /* ── Actions row ──────────────────────────────────────────── */
+  .actions-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+  }
+
+  /* ── Toast ────────────────────────────────────────────────── */
+  #toast {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    padding: 10px 16px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.2s ease;
+    pointer-events: none;
+    z-index: 100;
+    max-width: 320px;
+    border: 1px solid transparent;
+  }
+
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.success { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  #toast.error   { background: var(--red-dim);   border-color: var(--red);   color: var(--red);   }
+  #toast.info    { background: var(--blue-dim);  border-color: var(--blue);  color: var(--blue);  }
+
+  /* ── Divider ──────────────────────────────────────────────── */
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 16px 0;
+  }
+
+  /* ── Scrollbar ────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── Header ──────────────────────────────────────────────── -->
+  <header>
+    <div class="header-logo">
+      <div class="header-logo-icon">H</div>
+      Project Hamilton
+    </div>
+
+    <div class="header-pills">
+      <span class="pill pill-inactive" id="pill-training">Training</span>
+      <span class="pill pill-inactive" id="pill-streaming">Streaming</span>
+      <span class="pill pill-inactive" id="pill-beamng">BeamNG</span>
+    </div>
+
+    <div class="header-run-info" id="header-run-info">—</div>
+  </header>
+
+  <!-- ── Main ────────────────────────────────────────────────── -->
+  <div class="main">
+
+    <!-- ── Left panel: Launch config ─────────────────────────── -->
+    <div class="panel panel-left">
+
+      <!-- Vehicle -->
+      <div class="panel-section">
+        <div class="section-label">Vehicle</div>
+        <div class="radio-group" id="car-group">
+          <label class="radio-option selected" data-group="car" data-value="sbr">
+            <input type="radio" name="car" value="sbr" checked>
+            <div class="radio-dot"><div></div></div>
+            <div>
+              <div class="radio-name">SBR4 Track</div>
+              <div class="radio-sub">Subaru BRZ · RWD · Natural Aspirated</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="car" data-value="etkc">
+            <input type="radio" name="car" value="etkc">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">ETK K-Series Kc6x Trackday A</div>
+              <div class="radio-sub">AWD · Turbocharged · 455 hp</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Mode -->
+      <div class="panel-section">
+        <div class="section-label">Mode</div>
+        <div class="radio-group radio-group-inline" id="mode-group">
+          <label class="radio-option selected" data-group="mode" data-value="training">
+            <input type="radio" name="mode" value="training" checked>
+            <div class="radio-dot"></div>
+            <div class="radio-name" style="font-size:12px">Training</div>
+          </label>
+          <label class="radio-option" data-group="mode" data-value="beamng_only">
+            <input type="radio" name="mode" value="beamng_only">
+            <div class="radio-dot"></div>
+            <div class="radio-name" style="font-size:12px">BeamNG Only</div>
+          </label>
+          <label class="radio-option" data-group="mode" data-value="stream_only">
+            <input type="radio" name="mode" value="stream_only">
+            <div class="radio-dot"></div>
+            <div class="radio-name" style="font-size:12px">Stream Only</div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Run -->
+      <div class="panel-section" id="run-section">
+        <div class="section-label">Run</div>
+        <div class="run-row">
+          <label class="radio-option selected" data-group="run_mode" data-value="resume" style="justify-content:center; text-align:center;">
+            <input type="radio" name="run_mode" value="resume" checked>
+            <div class="radio-dot"></div>
+            <span style="font-size:12px;font-weight:500">Resume</span>
+          </label>
+          <label class="radio-option" data-group="run_mode" data-value="fresh" style="justify-content:center; text-align:center;">
+            <input type="radio" name="run_mode" value="fresh">
+            <div class="radio-dot"></div>
+            <span style="font-size:12px;font-weight:500">Fresh</span>
+          </label>
+        </div>
+        <select class="select" id="resume-select"></select>
+        <input type="text" class="input" id="fresh-name" placeholder="Run name (e.g. v3_etkc)" style="display:none; margin-top:6px;">
+      </div>
+
+      <!-- Steps (hidden for non-training modes) -->
+      <div class="panel-section" id="steps-section">
+        <div class="section-label">Total Steps</div>
+        <div class="slider-row">
+          <input type="range" id="steps-slider" min="10000" max="200000" step="5000" value="100000">
+          <div class="slider-readout">
+            <div class="slider-steps" id="steps-val">100,000</div>
+            <div class="slider-time" id="steps-time">~7.5 hours</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stream toggle -->
+      <div class="panel-section" id="stream-section">
+        <div class="section-label">Streaming</div>
+        <label class="toggle-row">
+          <input type="checkbox" id="stream-toggle">
+          <div class="toggle-switch"></div>
+          <span>Enable OBS Stream</span>
+        </label>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Launch buttons -->
+      <div class="btn-group">
+        <button class="btn btn-primary" id="launch-btn" onclick="launch()">Launch</button>
+        <button class="btn btn-danger"    onclick="stopTraining()">Stop Training</button>
+        <button class="btn btn-secondary" onclick="stopStream()">Stop Stream</button>
+      </div>
+    </div>
+
+    <!-- ── Right panel: Monitor ───────────────────────────────── -->
+    <div class="panel panel-right">
+
+      <!-- Screenshot -->
+      <div class="panel-section">
+        <div class="section-label" style="margin-bottom:8px">OBS Capture</div>
+        <div class="screenshot-wrap" id="screenshot-wrap">
+          <img id="screenshot-img" src="" alt="" style="display:none" onload="onScreenshotLoaded()" onerror="onScreenshotError()">
+          <div class="screenshot-overlay visible" id="screenshot-overlay">
+            <div class="no-signal">◫</div>
+            <div>No signal</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress -->
+      <div class="panel-section progress-wrap">
+        <div class="progress-meta">
+          <span id="progress-text">0 / 100,000 steps</span>
+          <span id="eta-text">—</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="panel-section">
+        <div class="log-header">
+          <div class="section-label" style="margin-bottom:0">Training Log</div>
+          <div class="log-live-dot">
+            <div class="live-dot" id="live-dot"></div>
+            <span id="live-label">idle</span>
+          </div>
+        </div>
+        <div style="margin-top:8px">
+          <div class="log-container" id="log-container">
+            <div class="log-line">Waiting for training to start...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Damage override -->
+      <div class="panel-section">
+        <div class="section-label">Max Damage Override</div>
+        <div class="damage-row">
+          <div class="damage-input-wrap">
+            <input type="number" class="input" id="damage-input" value="500" min="50" step="10" placeholder="500">
+            <span class="damage-unit">pts</span>
+          </div>
+          <button class="btn btn-warn" onclick="setDamage()">Set</button>
+          <button class="btn btn-sm"   id="restore-btn" onclick="restoreDamage()" disabled>Restore</button>
+        </div>
+        <div class="damage-meta" id="damage-meta">Active limit: —</div>
+      </div>
+
+      <!-- Quick actions -->
+      <div class="panel-section">
+        <div class="section-label">Quick Actions</div>
+        <div class="actions-row">
+          <button class="btn btn-sm" onclick="refreshScreenshot()">Refresh Screenshot</button>
+          <button class="btn btn-sm" onclick="startStream()">Start Stream</button>
+          <button class="btn btn-sm" onclick="wakeScreen()">Wake Screen</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ── State ────────────────────────────────────────────────────
+let isTraining = false;
+let screenshotTimer = null;
+let toastTimer = null;
+const STEPS_PER_SECOND = 27000 / 7200;
+
+// ── Init ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initRadioGroups();
+  initSlider();
+  initRunMode();
+  loadRuns();
+  pollStatus();
+  pollLog();
+  setInterval(pollStatus, 3000);
+  setInterval(pollLog, 5000);
+  refreshScreenshot();
+});
+
+// ── Radio groups ─────────────────────────────────────────────
+function initRadioGroups() {
+  document.querySelectorAll('.radio-option[data-group]').forEach(el => {
+    el.addEventListener('click', () => {
+      const group = el.dataset.group;
+      document.querySelectorAll(`.radio-option[data-group="${group}"]`)
+        .forEach(o => o.classList.remove('selected'));
+      el.classList.add('selected');
+      el.querySelector('input[type="radio"]').checked = true;
+      if (group === 'mode') onModeChange(el.dataset.value);
+      if (group === 'run_mode') onRunModeChange(el.dataset.value);
+    });
+  });
+}
+
+function onModeChange(mode) {
+  const trainingOnly = ['run-section', 'steps-section', 'stream-section'];
+  trainingOnly.forEach(id => {
+    document.getElementById(id).style.display =
+      (mode === 'training') ? '' : 'none';
+  });
+}
+
+function onRunModeChange(mode) {
+  document.getElementById('resume-select').style.display = mode === 'resume' ? '' : 'none';
+  document.getElementById('fresh-name').style.display    = mode === 'fresh'  ? '' : 'none';
+}
+
+function initRunMode() {
+  document.getElementById('fresh-name').style.display = 'none';
+}
+
+// ── Slider ───────────────────────────────────────────────────
+function initSlider() {
+  const slider = document.getElementById('steps-slider');
+  slider.addEventListener('input', updateSliderDisplay);
+  updateSliderDisplay();
+}
+
+function updateSliderDisplay() {
+  const val = parseInt(document.getElementById('steps-slider').value);
+  const hours = val / STEPS_PER_SECOND / 3600;
+  document.getElementById('steps-val').textContent  = val.toLocaleString();
+  document.getElementById('steps-time').textContent = `~${hours.toFixed(1)} hours`;
+}
+
+// ── Load runs ─────────────────────────────────────────────────
+async function loadRuns() {
+  try {
+    const r = await fetch('/api/runs');
+    const d = await r.json();
+    const sel = document.getElementById('resume-select');
+    sel.innerHTML = '';
+    if (!d.runs.length) {
+      sel.innerHTML = '<option value="">No runs yet</option>';
+      return;
+    }
+    d.runs.slice().reverse().forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = opt.textContent = name;
+      sel.appendChild(opt);
+    });
+  } catch (e) {}
+}
+
+// ── Status polling ────────────────────────────────────────────
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+
+    setPill('pill-training',  d.is_training);
+    setPill('pill-streaming', d.is_streaming);
+    setPill('pill-beamng',    d.is_beamng);
+
+    // Run info in header
+    if (d.run_name) {
+      const cur = (d.current_steps || 0).toLocaleString();
+      const tot = (d.total_steps  || 0).toLocaleString();
+      document.getElementById('header-run-info').textContent =
+        `${d.run_name}  ·  ${cur} / ${tot}`;
+    } else {
+      document.getElementById('header-run-info').textContent = '—';
+    }
+
+    // Progress bar
+    const pct = d.total_steps > 0
+      ? Math.min(100, (d.current_steps / d.total_steps) * 100)
+      : 0;
+    document.getElementById('progress-fill').style.width = pct + '%';
+    document.getElementById('progress-text').textContent =
+      `${(d.current_steps||0).toLocaleString()} / ${(d.total_steps||0).toLocaleString()} steps`;
+
+    // ETA
+    document.getElementById('eta-text').textContent =
+      d.is_training && d.eta_seconds != null ? formatETA(d.eta_seconds) : '—';
+
+    // Live dot
+    const dot = document.getElementById('live-dot');
+    const lbl = document.getElementById('live-label');
+    dot.classList.toggle('active', d.is_training);
+    lbl.textContent = d.is_training ? 'live' : 'idle';
+
+    // Screenshot auto-refresh when training
+    if (d.is_training && !screenshotTimer) {
+      screenshotTimer = setInterval(refreshScreenshot, 15000);
+    } else if (!d.is_training && screenshotTimer) {
+      clearInterval(screenshotTimer);
+      screenshotTimer = null;
+    }
+
+    isTraining = d.is_training;
+
+    // Damage meta
+    if (d.max_damage != null) {
+      document.getElementById('damage-input').value = d.max_damage;
+      document.getElementById('damage-meta').textContent =
+        `Active limit: ${d.max_damage} pts` +
+        (d.prev_max_damage != null ? `  (prev: ${d.prev_max_damage})` : '');
+      document.getElementById('restore-btn').disabled = d.prev_max_damage == null;
+    }
+
+  } catch (e) { /* server not reachable */ }
+}
+
+function setPill(id, active) {
+  const el = document.getElementById(id);
+  el.className = 'pill ' + (active ? 'pill-active' : 'pill-inactive');
+}
+
+function formatETA(s) {
+  if (s <= 0) return 'Complete';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `~${h}h ${m}m left` : `~${m}m left`;
+}
+
+// ── Log polling ───────────────────────────────────────────────
+async function pollLog() {
+  try {
+    const r = await fetch('/api/log');
+    const d = await r.json();
+    const el = document.getElementById('log-container');
+    const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 20;
+    el.innerHTML = d.lines.map(l =>
+      `<div class="log-line">${escHtml(l)}</div>`
+    ).join('');
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch (e) {}
+}
+
+// ── Screenshot ────────────────────────────────────────────────
+async function refreshScreenshot() {
+  await fetch('/api/screenshot/refresh', { method: 'POST' });
+  loadScreenshot();
+}
+
+function loadScreenshot() {
+  const img = document.getElementById('screenshot-img');
+  img.src = '/api/screenshot?t=' + Date.now();
+}
+
+function onScreenshotLoaded() {
+  const img = document.getElementById('screenshot-img');
+  img.style.display = 'block';
+  document.getElementById('screenshot-overlay').classList.remove('visible');
+}
+
+function onScreenshotError() {
+  document.getElementById('screenshot-img').style.display = 'none';
+  document.getElementById('screenshot-overlay').classList.add('visible');
+}
+
+// ── Launch ────────────────────────────────────────────────────
+async function launch() {
+  const car     = document.querySelector('input[name="car"]:checked').value;
+  const mode    = document.querySelector('input[name="mode"]:checked').value;
+  const runMode = document.querySelector('input[name="run_mode"]:checked').value;
+  const fresh   = runMode === 'fresh';
+  const runName = fresh
+    ? document.getElementById('fresh-name').value.trim()
+    : document.getElementById('resume-select').value;
+  const timesteps = parseInt(document.getElementById('steps-slider').value);
+  const stream    = document.getElementById('stream-toggle').checked;
+  const maxDamage = parseFloat(document.getElementById('damage-input').value) || 500;
+
+  const btn = document.getElementById('launch-btn');
+  btn.disabled = true;
+  btn.textContent = 'Launching…';
+
+  try {
+    const r = await fetch('/api/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage }),
+    });
+    const d = await r.json();
+    toast(d.message, d.ok ? 'success' : 'error');
+    if (d.ok) setTimeout(pollStatus, 2000);
+  } catch (e) {
+    toast('Launch failed — is the server running on Jango?', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Launch';
+  }
+}
+
+// ── Stop ──────────────────────────────────────────────────────
+async function stopTraining() {
+  const r = await fetch('/api/stop/training', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, d.ok ? 'info' : 'error');
+  setTimeout(pollStatus, 1500);
+}
+
+async function stopStream() {
+  const r = await fetch('/api/stop/stream', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, 'info');
+  setTimeout(pollStatus, 1500);
+}
+
+async function startStream() {
+  const r = await fetch('/api/start/stream', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, 'info');
+  setTimeout(pollStatus, 1500);
+}
+
+async function wakeScreen() {
+  const r = await fetch('/api/wake', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, 'info');
+}
+
+// ── Damage override ───────────────────────────────────────────
+async function setDamage() {
+  const val = parseFloat(document.getElementById('damage-input').value);
+  if (isNaN(val)) { toast('Enter a valid number.', 'error'); return; }
+
+  const r = await fetch('/api/damage/set', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ max_damage: val }),
+  });
+  const d = await r.json();
+  toast(d.message, d.ok ? 'success' : 'error');
+  if (d.ok) {
+    document.getElementById('damage-meta').textContent =
+      `Active limit: ${d.max_damage} pts  (prev: ${d.prev_max_damage})`;
+    document.getElementById('restore-btn').disabled = false;
+  }
+}
+
+async function restoreDamage() {
+  const r = await fetch('/api/damage/restore', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, d.ok ? 'success' : 'error');
+  if (d.ok) {
+    document.getElementById('damage-input').value = d.max_damage;
+    document.getElementById('damage-meta').textContent =
+      `Active limit: ${d.max_damage} pts  (prev: ${d.prev_max_damage})`;
+  }
+}
+
+// ── Toast ─────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.className = '', 3500);
+}
+
+// ── Utils ─────────────────────────────────────────────────────
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
