@@ -118,6 +118,8 @@ def main() -> None:
                         help="OBS WebSocket password (leave blank if not set)")
     parser.add_argument("--process",  default=BEAMNG_PROCESS,
                         help="Process name to watch (default: BeamNG.x64)")
+    parser.add_argument("--output",   default="obs_screenshot.png",
+                        help="Output path for screenshot action (default: obs_screenshot.png)")
     args = parser.parse_args()
 
     if args.action == "spotlight":
@@ -162,7 +164,7 @@ def main() -> None:
 
     elif args.action == "screenshot":
         source = args.process if args.process != BEAMNG_PROCESS else "Display_Capture"
-        out = "obs_screenshot.png"
+        out = args.output
         try:
             resp = cl.get_source_screenshot(source, "png", 1280, 720, -1)
             import base64, re
