@@ -111,7 +111,7 @@ def is_process_running(name: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Control OBS streaming via WebSocket.")
-    parser.add_argument("action", choices=["start", "stop", "status", "watch", "spotlight", "game-capture", "display-capture"])
+    parser.add_argument("action", choices=["start", "stop", "status", "watch", "spotlight", "game-capture", "display-capture", "screenshot"])
     parser.add_argument("--host",     default="localhost")
     parser.add_argument("--port",     type=int, default=4455)
     parser.add_argument("--password", default="",
@@ -157,6 +157,19 @@ def main() -> None:
         try:
             cl.create_input(scene, "Display_Capture", "monitor_capture", {"monitor": 0}, True)
             print(f"Added display capture source to scene '{scene}'.")
+        except Exception as exc:
+            print(f"Failed: {exc}")
+
+    elif args.action == "screenshot":
+        source = args.process if args.process != BEAMNG_PROCESS else "Display_Capture"
+        out = "obs_screenshot.png"
+        try:
+            resp = cl.get_source_screenshot(source, "png", 1280, 720, -1)
+            import base64, re
+            data = re.sub(r"^data:image/[^;]+;base64,", "", resp.image_data)
+            with open(out, "wb") as f:
+                f.write(base64.b64decode(data))
+            print(f"Screenshot saved to {out}")
         except Exception as exc:
             print(f"Failed: {exc}")
 
