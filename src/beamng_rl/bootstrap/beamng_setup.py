@@ -54,13 +54,13 @@ def resolve_beamng_home_from_path_or_env(beamng_home: str | Path | None = None) 
     return resolved_home
 
 
-def build_hirochi_sbr_scenario(
+def build_hirochi_etkc_scenario(
     bng: Any,
     *,
     vehicle_id: str = "ego_vehicle",
-    scenario_instance_name: str = "sbr4_bootstrap",
+    scenario_instance_name: str = "etkc_bootstrap",
 ) -> tuple[Any, Any]:
-    """Build the known-good Hirochi Raceway SBR track scenario."""
+    """Build the Hirochi Raceway ETK K-Series Trackday (A) scenario."""
 
     # BeamNGpy is imported lazily so importing the Gym env in mock mode never
     # requires a BeamNG.tech installation or the beamngpy package.
@@ -69,13 +69,13 @@ def build_hirochi_sbr_scenario(
     scenario = Scenario(
         "hirochi_raceway",
         scenario_instance_name,
-        description="SBR4 Track bootstrap scenario",
+        description="ETK K-Series Trackday bootstrap scenario",
     )
 
     vehicle = Vehicle(
         vehicle_id,
-        model="sbr",
-        part_config="vehicles/sbr/track.pc",
+        model="etkc",
+        part_config="vehicles/etkc/kc6x_trackday_A.pc",
         license="JANGO",
         color="Blue",
     )

@@ -27,7 +27,7 @@ def main() -> None:
     centreline_path = (
         REPO_ROOT / "data" / "hirochi_track" / "centreline_resampled_2_0m.json"
     )
-    model_path = REPO_ROOT / "models" / "mock_ppo_smoke.zip"
+    model_path = REPO_ROOT / "models" / "sbr" / "mock_ppo_smoke.zip"
 
     env: BeamNGRacingEnv | None = None
     try:
