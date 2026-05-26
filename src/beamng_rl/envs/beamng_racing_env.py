@@ -27,7 +27,6 @@ try:
         apply_low_graphics_preset,
         apply_shadow_disabling,
         build_hirochi_sbr_scenario,
-        resolve_beamng_binary,
         resolve_beamng_home_from_path_or_env,
     )
     from beamng_rl.envs.observation_builder import ObservationBuilder
@@ -53,7 +52,6 @@ except ModuleNotFoundError as exc:
         apply_low_graphics_preset,
         apply_shadow_disabling,
         build_hirochi_sbr_scenario,
-        resolve_beamng_binary,
         resolve_beamng_home_from_path_or_env,
     )
     from beamng_rl.envs.observation_builder import ObservationBuilder
@@ -882,7 +880,6 @@ class BeamNGRacingEnv(gym.Env):
                     self.beamng_host,
                     self.beamng_port,
                     home=str(self._resolved_beamng_home),
-                    binary=resolve_beamng_binary(self._resolved_beamng_home),
                     # nogpu=True disables GPU rendering (beamngpy 1.35 API).
                     # Controlled by nogfx=True on BeamNGRacingEnv — change it there.
                     nogpu=self.nogfx,
