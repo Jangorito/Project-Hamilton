@@ -51,13 +51,16 @@ def _hwnd_for_process_name(name: str) -> int | None:
     def enum_cb(hwnd, _):
         pid = ctypes.wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if pid.value in pids and user32.IsWindowVisible(hwnd):
+        if pid.value in pids:
             found.append(hwnd)
-            return False
-        return True
+        return True  # keep enumerating to collect all windows
 
     user32.EnumWindows(enum_cb, 0)
-    return found[0] if found else None
+    if not found:
+        return None
+    # prefer a visible window; fall back to any window owned by the process
+    visible = [h for h in found if user32.IsWindowVisible(h)]
+    return visible[0] if visible else found[0]
 
 
 def discover_exe_from_obs(cl: obs.ReqClient) -> list[str]:
