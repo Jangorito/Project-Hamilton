@@ -27,6 +27,7 @@ try:
         apply_low_graphics_preset,
         apply_shadow_disabling,
         build_hirochi_etkc_scenario,
+        build_hirochi_sbr_scenario,
         resolve_beamng_home_from_path_or_env,
     )
     from beamng_rl.envs.observation_builder import ObservationBuilder
@@ -52,6 +53,7 @@ except ModuleNotFoundError as exc:
         apply_low_graphics_preset,
         apply_shadow_disabling,
         build_hirochi_etkc_scenario,
+        build_hirochi_sbr_scenario,
         resolve_beamng_home_from_path_or_env,
     )
     from beamng_rl.envs.observation_builder import ObservationBuilder
@@ -139,6 +141,7 @@ class BeamNGRacingEnv(gym.Env):
         nogfx: bool = False,
         max_damage: float = 500.0,
         wall_bash_steps_limit: int = 30,
+        vehicle_model: str = "etkc",
     ) -> None:
         super().__init__()
 
@@ -213,6 +216,7 @@ class BeamNGRacingEnv(gym.Env):
         self.nogfx = bool(nogfx)
         self.max_damage = float(max_damage)
         self.wall_bash_steps_limit = int(wall_bash_steps_limit)
+        self.vehicle_model = str(vehicle_model)
 
         # Runtime counters are reset in reset(), but initial values keep the
         # object inspectable immediately after construction.
@@ -907,7 +911,12 @@ class BeamNGRacingEnv(gym.Env):
             # manual debugging and training start from the same level, vehicle,
             # and part config. scenario_name is kept as a public constructor
             # parameter, but the shared setup is currently Hirochi.
-            scenario, vehicle = build_hirochi_etkc_scenario(
+            _scenario_builder = (
+                build_hirochi_sbr_scenario
+                if self.vehicle_model == "sbr"
+                else build_hirochi_etkc_scenario
+            )
+            scenario, vehicle = _scenario_builder(
                 beamng,
                 vehicle_id=self.vehicle_id,
                 scenario_instance_name=f"beamng_rl_{self.vehicle_id}",
