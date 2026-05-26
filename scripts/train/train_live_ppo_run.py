@@ -57,7 +57,23 @@ from beamng_rl.training.callbacks import RewardComponentLogger
 from beamng_rl.training.run_manager import RunManager, prompt_run_name
 
 # ---------------------------------------------------------------------------
-# Tunable training constants
+# Launcher session config — written by scripts/launcher/app.py before launch
+# ---------------------------------------------------------------------------
+_SESSION_CONFIG_PATH = REPO_ROOT / "config" / "launcher_session.json"
+
+
+def _load_session_config() -> dict:
+    if not _SESSION_CONFIG_PATH.exists():
+        return {}
+    try:
+        import json
+        return json.loads(_SESSION_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Tunable training constants (overridden by launcher_session.json if present)
 # ---------------------------------------------------------------------------
 TOTAL_TIMESTEPS  = 100_000
 CHECKPOINT_EVERY = 8_000
@@ -211,16 +227,30 @@ def main() -> None:
                         help="Name for this training run.")
     args = parser.parse_args()
 
+    # CLI args take precedence over launcher session config.
+    session = _load_session_config()
+    total_timesteps = int(session.get("total_timesteps", TOTAL_TIMESTEPS))
+    vehicle_model   = str(session.get("car", "etkc"))
+    max_damage      = float(session.get("max_damage", ENV_CONFIG["max_damage"]))
+    fresh           = args.fresh or bool(session.get("fresh", False))
+    run_name_hint   = args.run_name or session.get("run_name", "") or None
+
+    if session:
+        print(f"Launcher config: car={vehicle_model}, steps={total_timesteps}, "
+              f"max_damage={max_damage}, fresh={fresh}")
+
     if not CENTRELINE_PATH.is_file():
         raise FileNotFoundError(f"Centreline JSON not found: {CENTRELINE_PATH}")
 
     rm = RunManager()
 
+    env_config = {**ENV_CONFIG, "max_damage": max_damage}
+
     # ------------------------------------------------------------------
     # Resolve run name and resume checkpoint
     # ------------------------------------------------------------------
-    if args.fresh:
-        run_name = args.run_name or prompt_run_name()
+    if fresh:
+        run_name = run_name_hint or prompt_run_name()
         if rm.exists(run_name):
             sys.exit(
                 f"Error: run '{run_name}' already exists.\n"
@@ -230,7 +260,7 @@ def main() -> None:
         rm.create_run(run_name, _build_run_config())
         print(f"Created run: {run_name}")
     else:
-        run_name = args.run_name or rm.find_latest_run()
+        run_name = run_name_hint or rm.find_latest_run()
         if run_name is None:
             sys.exit(
                 "No existing runs found. Start a new one with --fresh."
@@ -257,7 +287,8 @@ def main() -> None:
             launch_beamng=True,
             live_spawn_mode="bootstrap",
             vehicle_id="ego_vehicle",
-            **ENV_CONFIG,
+            vehicle_model=vehicle_model,
+            **env_config,
         )
 
         monitored_env = Monitor(env)
@@ -281,11 +312,11 @@ def main() -> None:
                 **PPO_CONFIG,
             )
 
-        print(f"\nTraining for {TOTAL_TIMESTEPS} timesteps...")
+        print(f"\nTraining for {total_timesteps} timesteps...")
         print(f"  TensorBoard : tensorboard --logdir {log_dir.parent}")
         print(f"  Checkpoints : {checkpoint_dir}")
 
-        model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=[checkpoint_cb, RewardComponentLogger()])
+        model.learn(total_timesteps=total_timesteps, callback=[checkpoint_cb, RewardComponentLogger()])
 
         model_path = rm.run_dir(run_name) / "model_final.zip"
         model.save(str(model_path))
