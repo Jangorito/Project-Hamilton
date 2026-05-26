@@ -21,7 +21,7 @@ from beamng_rl.bootstrap.beamng_setup import (
     STUDENT_BEAMNG_HOME,
     apply_low_graphics_preset,
     apply_shadow_disabling,
-    build_hirochi_sbr_scenario,
+    build_hirochi_etkc_scenario,
     is_student_beamng_home,
     resolve_beamng_home_from_path_or_env,
 )
@@ -84,13 +84,13 @@ def export_path(
 # Bootstrap
 # ---------------------------------------------------------------------------
 def build_scenario(bng: BeamNGpy) -> tuple[object, object]:
-    """Build the shared Hirochi/SBR scenario used by bootstrap and live env."""
+    """Build the shared Hirochi/ETK K-Series scenario used by bootstrap and live env."""
 
-    return build_hirochi_sbr_scenario(bng)
+    return build_hirochi_etkc_scenario(bng)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="BeamNG SBR4 bootstrap")
+    parser = argparse.ArgumentParser(description="BeamNG ETK K-Series bootstrap")
 
     parser.add_argument(
         "--beamng-home",

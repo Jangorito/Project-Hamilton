@@ -26,7 +26,7 @@ try:
         SPAWN_ROT,
         apply_low_graphics_preset,
         apply_shadow_disabling,
-        build_hirochi_sbr_scenario,
+        build_hirochi_etkc_scenario,
         resolve_beamng_home_from_path_or_env,
     )
     from beamng_rl.envs.observation_builder import ObservationBuilder
@@ -51,7 +51,7 @@ except ModuleNotFoundError as exc:
         SPAWN_ROT,
         apply_low_graphics_preset,
         apply_shadow_disabling,
-        build_hirochi_sbr_scenario,
+        build_hirochi_etkc_scenario,
         resolve_beamng_home_from_path_or_env,
     )
     from beamng_rl.envs.observation_builder import ObservationBuilder
@@ -907,7 +907,7 @@ class BeamNGRacingEnv(gym.Env):
             # manual debugging and training start from the same level, vehicle,
             # and part config. scenario_name is kept as a public constructor
             # parameter, but the shared setup is currently Hirochi.
-            scenario, vehicle = build_hirochi_sbr_scenario(
+            scenario, vehicle = build_hirochi_etkc_scenario(
                 beamng,
                 vehicle_id=self.vehicle_id,
                 scenario_instance_name=f"beamng_rl_{self.vehicle_id}",
