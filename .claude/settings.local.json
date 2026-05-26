@@ -18,7 +18,8 @@
       "PowerShell(netsh int ipv4 show dynamicport tcp)",
       "Bash(Sort-Object Name)",
       "PowerShell(Get-ChildItem \"c:\\\\Users\\\\Jango\\\\workspace\\\\BeamNG\\\\models\" | Where-Object { $_.Extension -eq \".zip\" })",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "PowerShell(tailscale ip -4)"
     ]
   }
 }

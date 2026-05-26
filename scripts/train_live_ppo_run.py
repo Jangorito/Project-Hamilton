@@ -53,6 +53,7 @@ except ImportError as exc:
     ) from exc
 
 from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv, RewardConfig
+from beamng_rl.training.callbacks import RewardComponentLogger
 from beamng_rl.training.run_manager import RunManager, prompt_run_name
 
 # ---------------------------------------------------------------------------
@@ -284,7 +285,7 @@ def main() -> None:
         print(f"  TensorBoard : tensorboard --logdir {log_dir.parent}")
         print(f"  Checkpoints : {checkpoint_dir}")
 
-        model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=checkpoint_cb)
+        model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=[checkpoint_cb, RewardComponentLogger()])
 
         model_path = rm.run_dir(run_name) / "model_final.zip"
         model.save(str(model_path))
