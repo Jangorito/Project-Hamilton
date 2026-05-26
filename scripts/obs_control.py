@@ -111,7 +111,7 @@ def is_process_running(name: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Control OBS streaming via WebSocket.")
-    parser.add_argument("action", choices=["start", "stop", "status", "watch", "spotlight"])
+    parser.add_argument("action", choices=["start", "stop", "status", "watch", "spotlight", "game-capture"])
     parser.add_argument("--host",     default="localhost")
     parser.add_argument("--port",     type=int, default=4455)
     parser.add_argument("--password", default="",
@@ -141,7 +141,23 @@ def main() -> None:
     cl = get_client(args.host, args.port, args.password)
     status = cl.get_stream_status()
 
-    if args.action == "status":
+    if args.action == "game-capture":
+        scene = cl.get_current_program_scene().current_program_scene_name
+        exe = args.process if args.process.lower().endswith(".exe") else f"{args.process}.exe"
+        input_name = f"{exe.replace('.exe', '')}_game_capture"
+        try:
+            cl.create_input(
+                scene_name=scene,
+                input_name=input_name,
+                input_kind="game_capture",
+                input_settings={"mode": "specific_window", "window": f"::{exe}"},
+            )
+            print(f"Added game capture source '{input_name}' to scene '{scene}'.")
+            print("Move/resize it in OBS to replace the old window capture source.")
+        except Exception as exc:
+            print(f"Failed: {exc}")
+
+    elif args.action == "status":
         if status.output_active:
             secs = status.output_duration // 1000
             print(f"Streaming  ({secs // 3600:02d}:{(secs % 3600) // 60:02d}:{secs % 60:02d})")
