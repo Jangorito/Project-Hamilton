@@ -146,12 +146,8 @@ def main() -> None:
         exe = args.process if args.process.lower().endswith(".exe") else f"{args.process}.exe"
         input_name = f"{exe.replace('.exe', '')}_game_capture"
         try:
-            cl.create_input(
-                scene_name=scene,
-                input_name=input_name,
-                input_kind="game_capture",
-                input_settings={"mode": "specific_window", "window": f"::{exe}"},
-            )
+            cl.create_input(scene, input_name, "game_capture",
+                            {"mode": "specific_window", "window": f"::{exe}"}, True)
             print(f"Added game capture source '{input_name}' to scene '{scene}'.")
             print("Move/resize it in OBS to replace the old window capture source.")
         except Exception as exc:
