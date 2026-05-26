@@ -1,0 +1,122 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    Start a detached training run and optionally follow its output.
+
+.EXAMPLE
+    # Resume latest run in background
+    .\scripts\launch_training.ps1
+
+    # Start a fresh run
+    .\scripts\launch_training.ps1 -Fresh -RunName v3_test
+
+    # Start and follow output live
+    .\scripts\launch_training.ps1 -Fresh -RunName v3_test -Follow
+
+    # Check if training is running
+    .\scripts\launch_training.ps1 -Status
+
+    # Tail the most recent log
+    .\scripts\launch_training.ps1 -Tail
+#>
+param(
+    [switch]$Fresh,
+    [string]$RunName   = "",
+    [switch]$Follow,
+    [switch]$Status,
+    [switch]$Tail
+)
+
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$LogDir   = Join-Path $RepoRoot "logs\remote"
+$PidFile  = Join-Path $LogDir "training.pid"
+$LogLink  = Join-Path $LogDir "latest.log"
+
+function Get-LatestLog {
+    if (Test-Path $LogLink) { return $LogLink }
+    $logs = Get-ChildItem $LogDir -Filter "training_*.log" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending
+    if ($logs) { return $logs[0].FullName }
+    return $null
+}
+
+function Get-RunningProcess {
+    if (-not (Test-Path $PidFile)) { return $null }
+    $savedPid = (Get-Content $PidFile -Raw).Trim()
+    return Get-Process -Id $savedPid -ErrorAction SilentlyContinue
+}
+
+# ── Status ────────────────────────────────────────────────────────────────────
+if ($Status) {
+    $proc = Get-RunningProcess
+    if ($proc) {
+        Write-Host "Training is running  (PID $($proc.Id), CPU $([math]::Round($proc.CPU,1))s)"
+    } else {
+        Write-Host "No training process running."
+    }
+    $log = Get-LatestLog
+    if ($log) { Write-Host "Latest log : $log" }
+    exit
+}
+
+# ── Tail only ─────────────────────────────────────────────────────────────────
+if ($Tail) {
+    $log = Get-LatestLog
+    if (-not $log) { Write-Host "No log file found."; exit 1 }
+    Write-Host "Tailing $log  (Ctrl+C to stop)`n"
+    Get-Content $log -Wait
+    exit
+}
+
+# ── Guard: don't double-launch ────────────────────────────────────────────────
+$existing = Get-RunningProcess
+if ($existing) {
+    Write-Host "Training already running (PID $($existing.Id))."
+    Write-Host "Use -Status or -Tail to monitor it."
+    exit 1
+}
+
+# ── Resolve python ────────────────────────────────────────────────────────────
+$PythonExe = Join-Path $RepoRoot "venv\Scripts\python.exe"
+if (-not (Test-Path $PythonExe)) { $PythonExe = "python" }
+
+# ── Build argument string ─────────────────────────────────────────────────────
+$TrainArgs = "scripts\train_live_ppo_run.py"
+if ($Fresh)   { $TrainArgs += " --fresh" }
+if ($RunName) { $TrainArgs += " --run-name $RunName" }
+
+# ── Prepare log file ──────────────────────────────────────────────────────────
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
+$Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$LogFile   = Join-Path $LogDir "training_$Timestamp.log"
+
+# Keep a stable "latest" pointer
+if (Test-Path $LogLink) { Remove-Item $LogLink -Force }
+New-Item -ItemType SymbolicLink -Path $LogLink -Target $LogFile -ErrorAction SilentlyContinue | Out-Null
+# Fallback if symlinks aren't allowed: just copy path into a text file
+if (-not (Test-Path $LogLink)) {
+    $LogFile | Out-File $LogLink -Encoding utf8
+}
+
+# ── Launch detached powershell that runs python and captures both streams ─────
+$inner = "Set-Location '$RepoRoot'; & '$PythonExe' $TrainArgs 2>&1 | Tee-Object -FilePath '$LogFile'"
+$proc  = Start-Process powershell `
+    -ArgumentList "-NonInteractive", "-Command", $inner `
+    -WindowStyle Hidden `
+    -PassThru
+
+$proc.Id | Out-File $PidFile -Encoding utf8
+
+Write-Host "Training started."
+Write-Host "  PID : $($proc.Id)"
+Write-Host "  Log : $LogFile"
+Write-Host ""
+Write-Host "Commands:"
+Write-Host "  .\scripts\launch_training.ps1 -Status   # check if running"
+Write-Host "  .\scripts\launch_training.ps1 -Tail     # follow output"
+
+if ($Follow) {
+    Write-Host "`nFollowing output (Ctrl+C to stop watching — training keeps running)`n"
+    Start-Sleep -Seconds 1
+    Get-Content $LogFile -Wait
+}
