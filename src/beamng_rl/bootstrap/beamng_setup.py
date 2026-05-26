@@ -26,6 +26,17 @@ SHADOWS_DISABLE_SETTING_KEY = "GraphicDisableShadows"
 SHADOWS_DISABLE_ALL = "2"
 
 
+_BEAMNG_BINARY_CANDIDATES = ("BeamNG.tech.x64", "BeamNG.tech")
+
+
+def resolve_beamng_binary(home: Path) -> str | None:
+    """Return the BeamNG binary stem for home (no .exe), or None to use BeamNGpy's default."""
+    for name in _BEAMNG_BINARY_CANDIDATES:
+        if (home / f"{name}.exe").exists():
+            return name
+    return None
+
+
 def resolve_beamng_home_from_path_or_env(beamng_home: str | Path | None = None) -> Path:
     """Resolve BeamNG.tech home from an explicit path, env var, or local defaults."""
 
