@@ -26,54 +26,74 @@ def get_client(host: str, port: int, password: str) -> obs.ReqClient:
                  "Make sure OBS is running and WebSocket is enabled (Tools -> WebSocket Server Settings).")
 
 
-def spotlight_process(name: str) -> bool:
-    """Restore and bring the main window of a named process to the foreground."""
+def _hwnd_for_process_name(name: str) -> int | None:
+    """Return the first visible HWND whose owning process matches name, or None."""
     user32 = ctypes.windll.user32
-    procs = [
-        p for p in subprocess.run(
-            ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True,
-        ).stdout.splitlines()
-        if name.lower() in p.lower()
-    ]
-    if not procs:
-        return False
-
-    # EnumWindows to find the main window belonging to any matching PID
-    pid_result = subprocess.run(
+    result = subprocess.run(
         ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
         capture_output=True, text=True,
     )
-    pids = set()
-    for line in pid_result.stdout.splitlines():
+    pids: set[int] = set()
+    for line in result.stdout.splitlines():
         parts = line.strip('"').split('","')
         if len(parts) >= 2:
             try:
                 pids.add(int(parts[1]))
             except ValueError:
                 pass
+    if not pids:
+        return None
 
-    found_hwnd = ctypes.wintypes.HWND(0)
+    found: list[int] = []
 
     @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
     def enum_cb(hwnd, _):
-        nonlocal found_hwnd
         pid = ctypes.wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         if pid.value in pids and user32.IsWindowVisible(hwnd):
-            found_hwnd = hwnd
-            return False  # stop enumeration
+            found.append(hwnd)
+            return False
         return True
 
     user32.EnumWindows(enum_cb, 0)
+    return found[0] if found else None
 
-    if not found_hwnd:
+
+def discover_exe_from_obs(cl: obs.ReqClient) -> list[str]:
+    """Query OBS window-capture sources and return their exe names (sans .exe)."""
+    exes: list[str] = []
+    try:
+        scene = cl.get_current_program_scene().current_program_scene_name
+        items = cl.get_scene_item_list(scene).scene_items
+        for item in items:
+            source_name = item.get("sourceName") or item.get("inputName", "")
+            if not source_name:
+                continue
+            try:
+                resp = cl.get_input_settings(source_name)
+            except Exception:
+                continue
+            if resp.input_kind != "window_capture":
+                continue
+            # OBS window capture stores window as "title:class:exe.exe"
+            window = resp.input_settings.get("window", "")
+            parts = window.split(":")
+            if len(parts) >= 3 and parts[2]:
+                exes.append(parts[2].removesuffix(".exe"))
+    except Exception as exc:
+        print(f"OBS discovery failed: {exc}")
+    return exes
+
+
+def spotlight_process(name: str) -> bool:
+    """Restore and bring the main window of a named process to the foreground."""
+    hwnd = _hwnd_for_process_name(name)
+    if hwnd is None:
         return False
-
-    SW_RESTORE = 9
-    user32.ShowWindow(found_hwnd, SW_RESTORE)
-    user32.SetForegroundWindow(found_hwnd)
-    user32.BringWindowToTop(found_hwnd)
+    user32 = ctypes.windll.user32
+    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    user32.SetForegroundWindow(hwnd)
+    user32.BringWindowToTop(hwnd)
     return True
 
 
@@ -99,9 +119,20 @@ def main() -> None:
     if args.action == "spotlight":
         if spotlight_process(args.process):
             print(f"{args.process} window brought to foreground.")
-        else:
-            print(f"{args.process} not found or has no visible window.")
-        return
+            return
+        print(f"{args.process} not found — querying OBS for window capture sources...")
+        cl = get_client(args.host, args.port, args.password)
+        candidates = discover_exe_from_obs(cl)
+        if not candidates:
+            print("No window capture sources found in the current OBS scene.")
+            sys.exit(1)
+        for exe in candidates:
+            print(f"  trying: {exe}")
+            if spotlight_process(exe):
+                print(f"{exe} window brought to foreground. (use --process {exe} next time)")
+                return
+        print("Found window capture sources in OBS but none matched a running process.")
+        sys.exit(1)
 
     cl = get_client(args.host, args.port, args.password)
     status = cl.get_stream_status()
