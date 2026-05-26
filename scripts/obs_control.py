@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.wintypes
 import subprocess
 import sys
 import time
@@ -24,6 +26,57 @@ def get_client(host: str, port: int, password: str) -> obs.ReqClient:
                  "Make sure OBS is running and WebSocket is enabled (Tools -> WebSocket Server Settings).")
 
 
+def spotlight_process(name: str) -> bool:
+    """Restore and bring the main window of a named process to the foreground."""
+    user32 = ctypes.windll.user32
+    procs = [
+        p for p in subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True,
+        ).stdout.splitlines()
+        if name.lower() in p.lower()
+    ]
+    if not procs:
+        return False
+
+    # EnumWindows to find the main window belonging to any matching PID
+    pid_result = subprocess.run(
+        ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
+        capture_output=True, text=True,
+    )
+    pids = set()
+    for line in pid_result.stdout.splitlines():
+        parts = line.strip('"').split('","')
+        if len(parts) >= 2:
+            try:
+                pids.add(int(parts[1]))
+            except ValueError:
+                pass
+
+    found_hwnd = ctypes.wintypes.HWND(0)
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+    def enum_cb(hwnd, _):
+        nonlocal found_hwnd
+        pid = ctypes.wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in pids and user32.IsWindowVisible(hwnd):
+            found_hwnd = hwnd
+            return False  # stop enumeration
+        return True
+
+    user32.EnumWindows(enum_cb, 0)
+
+    if not found_hwnd:
+        return False
+
+    SW_RESTORE = 9
+    user32.ShowWindow(found_hwnd, SW_RESTORE)
+    user32.SetForegroundWindow(found_hwnd)
+    user32.BringWindowToTop(found_hwnd)
+    return True
+
+
 def is_process_running(name: str) -> bool:
     result = subprocess.run(
         ["tasklist", "/FI", f"IMAGENAME eq {name}", "/NH"],
@@ -34,7 +87,7 @@ def is_process_running(name: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Control OBS streaming via WebSocket.")
-    parser.add_argument("action", choices=["start", "stop", "status", "watch"])
+    parser.add_argument("action", choices=["start", "stop", "status", "watch", "spotlight"])
     parser.add_argument("--host",     default="localhost")
     parser.add_argument("--port",     type=int, default=4455)
     parser.add_argument("--password", default="",
@@ -42,6 +95,13 @@ def main() -> None:
     parser.add_argument("--process",  default=BEAMNG_PROCESS,
                         help="Process name to watch (default: BeamNG.x64)")
     args = parser.parse_args()
+
+    if args.action == "spotlight":
+        if spotlight_process(args.process):
+            print(f"{args.process} window brought to foreground.")
+        else:
+            print(f"{args.process} not found or has no visible window.")
+        return
 
     cl = get_client(args.host, args.port, args.password)
     status = cl.get_stream_status()
