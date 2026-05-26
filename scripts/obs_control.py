@@ -29,8 +29,9 @@ def get_client(host: str, port: int, password: str) -> obs.ReqClient:
 def _hwnd_for_process_name(name: str) -> int | None:
     """Return the first visible HWND whose owning process matches name, or None."""
     user32 = ctypes.windll.user32
+    exe_name = name if name.lower().endswith(".exe") else f"{name}.exe"
     result = subprocess.run(
-        ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
+        ["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"],
         capture_output=True, text=True,
     )
     pids: set[int] = set()
@@ -79,7 +80,7 @@ def discover_exe_from_obs(cl: obs.ReqClient) -> list[str]:
             window = resp.input_settings.get("window", "")
             parts = window.split(":")
             if len(parts) >= 3 and parts[2]:
-                exes.append(parts[2].removesuffix(".exe"))
+                exes.append(parts[2])  # keep .exe so tasklist filter matches exactly
     except Exception as exc:
         print(f"OBS discovery failed: {exc}")
     return exes
