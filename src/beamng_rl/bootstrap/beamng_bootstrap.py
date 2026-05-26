@@ -23,7 +23,6 @@ from beamng_rl.bootstrap.beamng_setup import (
     apply_shadow_disabling,
     build_hirochi_sbr_scenario,
     is_student_beamng_home,
-    resolve_beamng_binary,
     resolve_beamng_home_from_path_or_env,
 )
 from beamng_rl.bootstrap.graphics_settings import DEFAULT_LOW_GRAPHICS_SETTINGS_FILE
@@ -211,7 +210,7 @@ def main() -> None:
 
     print(f"Using BeamNG home: {beamng_home}")
 
-    bng = BeamNGpy(HOST, PORT, home=str(beamng_home), binary=resolve_beamng_binary(beamng_home))
+    bng = BeamNGpy(HOST, PORT, home=str(beamng_home))
     drawer: DebugPathDrawer | None = None
 
     try:
