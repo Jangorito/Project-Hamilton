@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import csv
 import re
 import subprocess
 import sys
@@ -36,6 +37,8 @@ PID_FILE = LOG_DIR / "training.pid"
 LOG_LINK = LOG_DIR / "latest.log"
 PROGRESS_FILE = LOG_DIR / "current_steps.txt"
 STOP_SIGNAL_FILE = LOG_DIR / "stop_signal.txt"
+WATCH_PID_FILE = LOG_DIR / "watch.pid"
+WATCH_LOG_FILE = LOG_DIR / "watch_latest.log"
 SESSION_CONFIG_PATH = REPO_ROOT / "config" / "launcher_session.json"
 
 OBS_PORT = int(os.environ.get("OBS_PORT", 4455))
@@ -66,6 +69,7 @@ _STEPS_PER_SECOND_FALLBACK = 27_000 / 7_200
 # Using file mtime as the timestamp means the rate reflects actual wall-clock training
 # speed, so it automatically adjusts when steps_per_action or physics rate changes.
 _pace: dict = {"mtime": 0.0, "steps": 0, "rate": None}
+_watch_proc: dict = {"proc": None, "log_file": None}
 
 # Guard: refuse to set max_damage below this to protect against fat-finger triggers
 _MIN_DAMAGE_THRESHOLD = 50.0
@@ -627,6 +631,178 @@ def _obs_action(action: str) -> tuple[bool, str]:
         return False, str(exc)
     message = (result.stdout or result.stderr).strip()
     return result.returncode == 0, message
+
+
+# ---------------------------------------------------------------------------
+# Eval / watch helpers
+# ---------------------------------------------------------------------------
+
+def _best_checkpoint_from_eval_csv(run_name: str) -> Path | None:
+    csv_path = rm.log_dir(run_name) / "checkpoints_eval.csv"
+    if not csv_path.exists():
+        return None
+    best_ckpt: str | None = None
+    best_progress = -1.0
+    try:
+        with csv_path.open(encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                try:
+                    p = float(row["progress_m"])
+                except (KeyError, ValueError):
+                    continue
+                if p > best_progress:
+                    best_progress = p
+                    best_ckpt = row.get("checkpoint")
+    except OSError:
+        return None
+    return Path(best_ckpt) if best_ckpt and Path(best_ckpt).is_file() else None
+
+
+def _checkpoint_label(path: Path) -> str:
+    m = re.search(r"_(\d+)_steps", path.stem)
+    if m:
+        return f"{int(m.group(1)):,} steps"
+    if path.stem == "model_final":
+        return "Final model"
+    return path.stem
+
+
+def _get_watch_pid() -> int | None:
+    if not WATCH_PID_FILE.exists():
+        return None
+    try:
+        pid = int(WATCH_PID_FILE.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return None
+    result = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+        capture_output=True, text=True,
+    )
+    return pid if str(pid) in result.stdout else None
+
+
+def _is_watching() -> bool:
+    return _get_watch_pid() is not None
+
+
+# ---------------------------------------------------------------------------
+# Routes — eval & watch
+# ---------------------------------------------------------------------------
+
+@app.route("/api/eval/checkpoints/<run_name>")
+def api_eval_checkpoints(run_name):
+    if not rm.exists(run_name):
+        return jsonify({"ok": False, "message": f"Run '{run_name}' not found."}), 404
+    checkpoints = rm.find_all_checkpoints(run_name)
+    best = _best_checkpoint_from_eval_csv(run_name) or rm.find_latest_checkpoint(run_name)
+    ckpt_list = [
+        {"path": str(c), "name": c.stem, "label": _checkpoint_label(c)}
+        for c in checkpoints
+    ]
+    return jsonify({
+        "checkpoints": ckpt_list,
+        "best": str(best) if best else None,
+    })
+
+
+@app.route("/api/watch", methods=["POST"])
+def api_watch():
+    if _is_training():
+        return jsonify({
+            "ok": False,
+            "message": "Cannot watch while training is running — stop training first.",
+        }), 409
+    if _is_watching():
+        return jsonify({
+            "ok": False,
+            "message": "A watch session is already active — stop it first.",
+        }), 409
+    data = request.get_json(force=True)
+    run_name = str(data.get("run_name", "")).strip()
+    checkpoint = data.get("checkpoint")
+    steps = max(1, int(data.get("steps", 500)))
+
+    if checkpoint:
+        model_path = Path(checkpoint)
+        if not model_path.is_file():
+            return jsonify({"ok": False, "message": f"Checkpoint not found: {checkpoint}"}), 400
+    else:
+        if not run_name:
+            return jsonify({"ok": False, "message": "Provide a run name or explicit checkpoint."}), 400
+        if not rm.exists(run_name):
+            return jsonify({"ok": False, "message": f"Run '{run_name}' not found."}), 404
+        model_path = _best_checkpoint_from_eval_csv(run_name) or rm.find_latest_checkpoint(run_name)
+        if model_path is None:
+            return jsonify({"ok": False, "message": f"No checkpoints found for run '{run_name}'."}), 404
+
+    _kill_beamng()
+
+    WATCH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    log_f = WATCH_LOG_FILE.open("w", encoding="utf-8", buffering=1)
+    proc = subprocess.Popen(
+        [
+            str(PYTHON_EXE),
+            str(REPO_ROOT / "scripts" / "eval" / "watch_model.py"),
+            str(model_path),
+            "--steps", str(steps),
+            "--no-wait",
+        ],
+        stdout=log_f,
+        stderr=subprocess.STDOUT,
+        cwd=str(REPO_ROOT),
+    )
+    _watch_proc["proc"] = proc
+    _watch_proc["log_file"] = log_f
+
+    WATCH_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WATCH_PID_FILE.write_text(str(proc.pid), encoding="utf-8")
+
+    label = Path(model_path).stem
+    return jsonify({"ok": True, "message": f"Watch started: {label}, {steps} steps."})
+
+
+@app.route("/api/watch/stop", methods=["POST"])
+def api_watch_stop():
+    pid = _get_watch_pid()
+    if pid is None:
+        return jsonify({"ok": False, "message": "No watch session found."})
+    subprocess.run(["taskkill", "/F", "/PID", str(pid), "/T"], capture_output=True)
+    try:
+        WATCH_PID_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    lf = _watch_proc.get("log_file")
+    if lf:
+        try:
+            lf.close()
+        except Exception:
+            pass
+    _watch_proc["proc"] = None
+    _watch_proc["log_file"] = None
+    return jsonify({"ok": True, "message": "Watch session stopped. BeamNG stays open — kill it when you're done."})
+
+
+@app.route("/api/watch/status")
+def api_watch_status():
+    return jsonify({"is_watching": _is_watching()})
+
+
+@app.route("/api/watch/log")
+def api_watch_log():
+    if not WATCH_LOG_FILE.exists():
+        return jsonify({"lines": ["No watch session active."]})
+    try:
+        text = WATCH_LOG_FILE.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()[-50:]
+        return jsonify({"lines": lines or ["(empty)"]})
+    except OSError:
+        return jsonify({"lines": ["Could not read watch log."]})
+
+
+@app.route("/api/stop/beamng", methods=["POST"])
+def api_stop_beamng():
+    _kill_beamng()
+    return jsonify({"ok": True, "message": "BeamNG killed."})
 
 
 # ---------------------------------------------------------------------------

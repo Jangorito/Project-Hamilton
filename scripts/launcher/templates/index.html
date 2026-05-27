@@ -536,6 +536,36 @@
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+  /* ── Tab bar ─────────────────────────────────────────────── */
+  .tab-bar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+  }
+
+  .tab-btn {
+    flex: 1;
+    padding: 6px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface2);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .tab-btn:hover { color: var(--text); border-color: var(--border2); }
+
+  .tab-btn.tab-active {
+    background: var(--blue-dim);
+    border-color: var(--blue);
+    color: var(--blue);
+  }
 </style>
 </head>
 <body>
@@ -563,6 +593,13 @@
 
     <!-- ── Left panel: Launch config ─────────────────────────── -->
     <div class="panel panel-left">
+
+      <div class="tab-bar">
+        <button class="tab-btn tab-active" id="tab-train" onclick="switchTab('train')">Train</button>
+        <button class="tab-btn" id="tab-eval" onclick="switchTab('eval')">Eval</button>
+      </div>
+
+      <div id="panel-train-config">
 
       <!-- Vehicle -->
       <div class="panel-section">
@@ -704,10 +741,44 @@
         <button class="btn btn-secondary" onclick="startStream()">Start Stream</button>
         <button class="btn btn-secondary" onclick="stopStream()">Stop Stream</button>
       </div>
-    </div>
+
+      </div><!-- #panel-train-config -->
+
+      <div id="panel-eval-config" style="display:none">
+
+        <div class="panel-section">
+          <div class="section-label">Run</div>
+          <select class="select" id="eval-run-select" onchange="onEvalRunChange()"></select>
+          <div id="eval-run-meta" style="font-size:11px; color:var(--muted); margin-top:6px; font-family:var(--font-mono);">—</div>
+        </div>
+
+        <div class="panel-section">
+          <div class="section-label">Checkpoint</div>
+          <select class="select" id="eval-ckpt-select">
+            <option value="__best__">Best (auto)</option>
+          </select>
+        </div>
+
+        <div class="panel-section">
+          <div class="section-label">Max Episode Steps</div>
+          <input type="number" class="input" id="eval-steps" value="500" min="50" max="5000" step="50">
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="btn-group">
+          <button class="btn btn-primary" id="watch-btn" onclick="startWatch()">Watch</button>
+          <button class="btn btn-danger" id="watch-stop-btn" onclick="stopWatch()" disabled>Stop Watch</button>
+        </div>
+
+      </div><!-- #panel-eval-config -->
+
+    </div><!-- .panel-left -->
 
     <!-- ── Right panel: Monitor ───────────────────────────────── -->
     <div class="panel panel-right">
+
+      <div id="panel-train-monitor">
 
       <!-- Progress -->
       <div class="panel-section progress-wrap">
@@ -761,6 +832,45 @@
           <button class="btn btn-sm" onclick="wakeScreen()">Wake Screen</button>
         </div>
       </div>
+
+      </div><!-- #panel-train-monitor -->
+
+      <div id="panel-eval-monitor" style="display:none">
+
+        <!-- Watch status -->
+        <div class="panel-section progress-wrap">
+          <div class="progress-title" id="watch-status-title">No watch session active</div>
+        </div>
+
+        <!-- Watch log -->
+        <div class="panel-section">
+          <div class="log-header">
+            <div class="section-label" style="margin-bottom:0">Watch Output</div>
+            <div class="log-live-dot">
+              <div class="live-dot" id="watch-live-dot"></div>
+              <span id="watch-live-label">idle</span>
+            </div>
+          </div>
+          <div style="margin-top:8px">
+            <div class="log-container" id="watch-log-container">
+              <div class="log-line">Select a run and click Watch to begin.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick actions -->
+        <div class="panel-section">
+          <div class="section-label">Quick Actions</div>
+          <div class="actions-row">
+            <button class="btn btn-sm" onclick="killBeamNG()">Kill BeamNG</button>
+            <button class="btn btn-sm" onclick="wakeScreen()">Wake Screen</button>
+          </div>
+          <div style="font-size:11px; color:var(--muted); margin-top:8px;">
+            Stop Watch kills the session but leaves BeamNG open so you can inspect the drawn path.
+          </div>
+        </div>
+
+      </div><!-- #panel-eval-monitor -->
 
     </div>
   </div>
@@ -1240,6 +1350,171 @@ function toast(msg, type = 'info') {
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+
+function pathBasename(p) {
+  return String(p).replace(/\\/g, '/').split('/').pop();
+}
+
+// ── Eval tab ─────────────────────────────────────────────────
+let currentTab = 'train';
+let evalCheckpoints = [];
+let evalBestCheckpoint = null;
+
+function switchTab(name) {
+  currentTab = name;
+  document.getElementById('tab-train').classList.toggle('tab-active', name === 'train');
+  document.getElementById('tab-eval').classList.toggle('tab-active', name === 'eval');
+  document.getElementById('panel-train-config').style.display = name === 'train' ? '' : 'none';
+  document.getElementById('panel-eval-config').style.display  = name === 'eval'  ? '' : 'none';
+  document.getElementById('panel-train-monitor').style.display = name === 'train' ? '' : 'none';
+  document.getElementById('panel-eval-monitor').style.display  = name === 'eval'  ? '' : 'none';
+  if (name === 'eval') {
+    loadEvalRuns();
+    pollWatchStatus();
+    pollWatchLog();
+  }
+}
+
+async function loadEvalRuns() {
+  try {
+    const r = await fetch('/api/runs');
+    const d = await r.json();
+    runDetails = d.details || {};
+    const sel = document.getElementById('eval-run-select');
+    const prev = sel.value;
+    sel.innerHTML = '';
+    if (!d.runs.length) {
+      sel.innerHTML = '<option value="">No runs yet</option>';
+      return;
+    }
+    d.runs.slice().reverse().forEach(name => {
+      const opt = document.createElement('option');
+      const details = runDetails[name] || {};
+      const meta = [];
+      if (details.car_label) meta.push(details.car_label);
+      if (details.speed_label) meta.push(details.speed_label);
+      opt.value = name;
+      opt.textContent = meta.length ? `${name}  (${meta.join(', ')})` : name;
+      sel.appendChild(opt);
+    });
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+    onEvalRunChange();
+  } catch (e) {}
+}
+
+async function onEvalRunChange() {
+  const runName = document.getElementById('eval-run-select').value;
+  if (!runName) return;
+  const details = runDetails[runName] || {};
+  const meta = [];
+  if (details.car_label) meta.push(details.car_label);
+  if (details.speed_label) meta.push(details.speed_label);
+  document.getElementById('eval-run-meta').textContent = meta.join(' · ') || '—';
+
+  try {
+    const r = await fetch(`/api/eval/checkpoints/${encodeURIComponent(runName)}`);
+    const d = await r.json();
+    evalCheckpoints = d.checkpoints || [];
+    evalBestCheckpoint = d.best;
+
+    const sel = document.getElementById('eval-ckpt-select');
+    sel.innerHTML = '';
+
+    const bestOpt = document.createElement('option');
+    bestOpt.value = '__best__';
+    const bestMatch = evalCheckpoints.find(c => c.path === evalBestCheckpoint);
+    bestOpt.textContent = evalBestCheckpoint
+      ? `Best — ${bestMatch ? bestMatch.label : pathBasename(evalBestCheckpoint)}`
+      : 'Best (no checkpoints)';
+    sel.appendChild(bestOpt);
+
+    evalCheckpoints.slice().reverse().forEach(ckpt => {
+      const opt = document.createElement('option');
+      opt.value = ckpt.path;
+      opt.textContent = ckpt.label;
+      sel.appendChild(opt);
+    });
+  } catch (e) {}
+}
+
+async function startWatch() {
+  const runName = document.getElementById('eval-run-select').value;
+  if (!runName) { toast('Select a run first.', 'error'); return; }
+  const ckptVal = document.getElementById('eval-ckpt-select').value;
+  const checkpoint = ckptVal === '__best__' ? null : ckptVal;
+  const steps = parseInt(document.getElementById('eval-steps').value) || 500;
+
+  const btn = document.getElementById('watch-btn');
+  btn.disabled = true;
+  btn.textContent = 'Launching…';
+
+  try {
+    const r = await fetch('/api/watch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_name: runName, checkpoint, steps }),
+    });
+    const d = await r.json();
+    toast(d.message, d.ok ? 'success' : 'error');
+    if (d.ok) {
+      setTimeout(pollWatchStatus, 2000);
+      setTimeout(pollWatchLog, 4000);
+    }
+  } catch (e) {
+    toast('Watch failed — is the server running?', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Watch';
+  }
+}
+
+async function stopWatch() {
+  const r = await fetch('/api/watch/stop', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, d.ok ? 'info' : 'error');
+  setTimeout(pollWatchStatus, 1000);
+}
+
+async function pollWatchStatus() {
+  try {
+    const r = await fetch('/api/watch/status');
+    const d = await r.json();
+    const watching = d.is_watching;
+    document.getElementById('watch-status-title').textContent =
+      watching ? 'Watch session running…' : 'No watch session active';
+    document.getElementById('watch-btn').disabled = watching || isTraining;
+    document.getElementById('watch-stop-btn').disabled = !watching;
+    const dot = document.getElementById('watch-live-dot');
+    dot.classList.toggle('active', watching);
+    document.getElementById('watch-live-label').textContent = watching ? 'live' : 'idle';
+  } catch (e) {}
+}
+
+async function pollWatchLog() {
+  try {
+    const r = await fetch('/api/watch/log');
+    const d = await r.json();
+    const el = document.getElementById('watch-log-container');
+    const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 20;
+    el.innerHTML = d.lines.map(l => `<div class="log-line">${escHtml(l)}</div>`).join('');
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch (e) {}
+}
+
+async function killBeamNG() {
+  const r = await fetch('/api/stop/beamng', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, 'info');
+  setTimeout(pollStatus, 1000);
+}
+
+// Poll watch status/log while on eval tab
+setInterval(() => {
+  if (currentTab === 'eval') {
+    pollWatchStatus();
+    pollWatchLog();
+  }
+}, 3000);
 </script>
 </body>
 </html>
