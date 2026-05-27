@@ -115,6 +115,11 @@ CSV_FIELDS = [
     "termination_reason", "terminated", "truncated",
 ]
 
+CAR_RUN_SUFFIXES = {
+    "sbr": "subaru",
+    "etkc": "etk",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -229,6 +234,21 @@ def _build_run_config(
     }
 
 
+def _ensure_car_suffix(run_name: str, vehicle_model: str, reward_key: str) -> str:
+    suffix = CAR_RUN_SUFFIXES[vehicle_model]
+    base = run_name.strip() or f"{reward_key}_{suffix}"
+    tokens = base.lower().replace("-", "_").split("_")
+    if suffix not in tokens:
+        base = f"{base}_{suffix}"
+    return base
+
+
+def _run_vehicle_model(config: dict[str, Any]) -> str | None:
+    env = _as_mapping(config.get("env"))
+    car = str(env.get("vehicle_model", "")).strip().lower()
+    return car if car in CAR_RUN_SUFFIXES else None
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -272,7 +292,7 @@ def main() -> None:
     # so TensorBoard log directories and checkpoint folders are self-labelling.
     # e.g. --reward-config v1 on etkc -> "etkc_v1", v2 -> "etkc_v2".
     # A manual --run-name or launcher session name always takes precedence.
-    run_name_hint = args.run_name or session.get("run_name", "") or f"{vehicle_model}_{reward_key}"
+    run_name_hint = args.run_name or session.get("run_name", "") or f"{reward_key}_{CAR_RUN_SUFFIXES[vehicle_model]}"
 
     if session:
         sf_label = f"{speed_factor}x" if speed_factor is not None else "default"
@@ -291,7 +311,7 @@ def main() -> None:
     # Resolve run name and resume checkpoint
     # ------------------------------------------------------------------
     if fresh:
-        run_name = run_name_hint or prompt_run_name()
+        run_name = _ensure_car_suffix(run_name_hint or prompt_run_name(), vehicle_model, reward_key)
         if rm.exists(run_name):
             sys.exit(
                 f"Error: run '{run_name}' already exists.\n"
@@ -318,6 +338,19 @@ def main() -> None:
             )
         if not rm.exists(run_name):
             sys.exit(f"Run '{run_name}' not found. Use --fresh to create it.")
+        existing_config = rm.load_config(run_name)
+        run_vehicle_model = _run_vehicle_model(existing_config)
+        if run_vehicle_model != vehicle_model:
+            if run_vehicle_model is None:
+                sys.exit(
+                    f"Run '{run_name}' has no saved vehicle metadata. "
+                    f"Start a fresh run for {vehicle_model} instead."
+                )
+            sys.exit(
+                f"Run '{run_name}' was created for {run_vehicle_model}, "
+                f"but launcher selected {vehicle_model}. Start a fresh run "
+                "or select the matching vehicle."
+            )
         resume_path = rm.find_latest_checkpoint(run_name)
         rm.open_run(run_name)
         print(f"Resuming run: {run_name}")

@@ -294,6 +294,11 @@ class BeamNGRacingEnv(gym.Env):
             )
         self.vehicle_model = vehicle_model_value
         self.speed_factor = int(speed_factor) if speed_factor is not None else None
+        if self.speed_factor is not None and self.speed_factor not in (1, 2, 4, 8, 16, 32):
+            raise ValueError(
+                "speed_factor must be one of 1, 2, 4, 8, 16, 32, "
+                f"got {speed_factor!r}"
+            )
 
         # Runtime counters are reset in reset(), but initial values keep the
         # object inspectable immediately after construction.
@@ -979,10 +984,18 @@ class BeamNGRacingEnv(gym.Env):
             # Deterministic stepping plus pause mirrors beamng_bootstrap.py and
             # makes beamng.step(...) the clock source for RL actions.
             try:
-                beamng.settings.set_deterministic(60, speed_factor=self.speed_factor)
+                desired_speed = self.speed_factor or 1
+                # BeamNG.tech's deterministic API stores speedup as powers of
+                # two: 0 -> 1x, 1 -> 2x, 2 -> 4x, etc. The launcher exposes
+                # user-facing multipliers, so convert before calling BeamNGpy.
+                beamng_speed_factor = int(math.log2(desired_speed))
+                beamng.settings.set_nondeterministic()
+                beamng.settings.remove_step_limit()
+                beamng.settings.set_deterministic(60, speed_factor=beamng_speed_factor)
                 print(
                     "BeamNG deterministic mode set: "
-                    f"steps_per_second=60, speed_factor={self.speed_factor or 'default'}"
+                    f"steps_per_second=60, requested_speed={desired_speed}x, "
+                    f"beamng_speed_factor={beamng_speed_factor}"
                 )
             except Exception as exc:
                 raise RuntimeError(

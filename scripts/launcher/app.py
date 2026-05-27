@@ -45,6 +45,10 @@ CAR_LABELS = {
     "sbr": "SBR4 Track",
     "etkc": "ETK K-Series Trackday A",
 }
+CAR_RUN_SUFFIXES = {
+    "sbr": "subaru",
+    "etkc": "etk",
+}
 SPEED_FACTORS = {1, 2, 4, 8, 16, 32}
 REWARD_CONFIG_KEYS = {"v1", "v2"}
 
@@ -198,6 +202,31 @@ def _save_session_config(config: dict) -> None:
     SESSION_CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
 
+def _run_vehicle_model(run_name: str) -> str | None:
+    config = rm.load_config(run_name)
+    env = config.get("env", {})
+    car = str(env.get("vehicle_model", "")).strip().lower()
+    return car if car in CAR_LABELS else None
+
+
+def _run_details(run_name: str) -> dict:
+    car = _run_vehicle_model(run_name)
+    return {
+        "car": car,
+        "car_label": CAR_LABELS.get(car, "Unknown vehicle"),
+        "has_vehicle_metadata": car is not None,
+    }
+
+
+def _ensure_car_suffix(run_name: str, car: str, reward_config: str) -> str:
+    suffix = CAR_RUN_SUFFIXES[car]
+    base = run_name.strip() or f"{reward_config}_{suffix}"
+    tokens = base.lower().replace("-", "_").split("_")
+    if suffix not in tokens:
+        base = f"{base}_{suffix}"
+    return base
+
+
 def _get_obs_password() -> str:
     if OBS_PASSWORD:
         return OBS_PASSWORD
@@ -257,7 +286,11 @@ def api_status():
 
 @app.route("/api/runs")
 def api_runs():
-    return jsonify({"runs": rm.list_runs()})
+    runs = rm.list_runs()
+    return jsonify({
+        "runs": runs,
+        "details": {run_name: _run_details(run_name) for run_name in runs},
+    })
 
 
 @app.route("/api/log")
@@ -324,6 +357,53 @@ def api_launch():
             "message": f"Unknown reward config {reward_config!r}. Choose one of: {sorted(REWARD_CONFIG_KEYS)}",
         }), 400
 
+    if mode == "stream_only":
+        session = _load_session_config()
+        session.update({
+            "car": car,
+            "car_label": CAR_LABELS[car],
+            "run_name": run_name,
+            "fresh": fresh,
+            "total_timesteps": timesteps,
+            "stream": stream,
+            "max_damage": max_damage,
+            "speed_factor": speed_factor,
+            "reward_config": reward_config,
+        })
+        _save_session_config(session)
+        obs_ok, obs_message = _obs_action("start")
+        status = 200 if obs_ok else 500
+        return jsonify({"ok": obs_ok, "message": obs_message or "Stream started."}), status
+
+    if mode == "beamng_only":
+        subprocess.run(["schtasks", "/run", "/tn", "BeamNGDirect"], capture_output=True)
+        return jsonify({"ok": True, "message": "BeamNG launched standalone."})
+
+    if fresh:
+        run_name = _ensure_car_suffix(run_name, car, reward_config)
+    else:
+        resume_name = run_name or rm.find_latest_run()
+        if not resume_name:
+            return jsonify({
+                "ok": False,
+                "message": "No run selected to resume. Start a fresh run.",
+            }), 400
+        run_car = _run_vehicle_model(resume_name)
+        if run_car != car:
+            reason = (
+                f"it is tagged as {CAR_LABELS[run_car]}"
+                if run_car
+                else "it has no saved vehicle metadata"
+            )
+            return jsonify({
+                "ok": False,
+                "message": (
+                    f"Cannot resume '{resume_name}' as {CAR_LABELS[car]} because {reason}. "
+                    "Start a fresh run for this car."
+                ),
+            }), 409
+        run_name = resume_name
+
     session = _load_session_config()
     session.update({
         "car": car,
@@ -338,16 +418,7 @@ def api_launch():
     })
     _save_session_config(session)
 
-    if mode == "stream_only":
-        obs_ok, obs_message = _obs_action("start")
-        status = 200 if obs_ok else 500
-        return jsonify({"ok": obs_ok, "message": obs_message or "Stream started."}), status
-
     _kill_beamng()
-
-    if mode == "beamng_only":
-        subprocess.run(["schtasks", "/run", "/tn", "BeamNGDirect"], capture_output=True)
-        return jsonify({"ok": True, "message": "BeamNG launched standalone."})
 
     obs_ok = True
     obs_message = ""
