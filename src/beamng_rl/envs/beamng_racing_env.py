@@ -213,6 +213,7 @@ class BeamNGRacingEnv(gym.Env):
         wall_bash_steps_limit: int = 30,
         vehicle_model: str = "etkc",
         speed_factor: int | None = None,
+        timing_profile: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -300,15 +301,50 @@ class BeamNGRacingEnv(gym.Env):
                 "speed_factor must be one of 1, 2, 4, 8, 16, 32, "
                 f"got {speed_factor!r}"
             )
-        _desired_speed = self.speed_factor if self.speed_factor is not None else 1
-        _raw_steps = round(self.steps_per_action / _desired_speed)
-        self._effective_steps_per_action: int = max(1, _raw_steps)
-        if _raw_steps < 1:
+        self.timing_profile = (
+            str(timing_profile).strip().lower()
+            if timing_profile is not None
+            else ("det50ms" if (self.speed_factor or 1) > 1 else "legacy_60hz")
+        )
+        if self.timing_profile not in ("legacy_60hz", "det50ms"):
+            raise ValueError(
+                "timing_profile must be one of 'legacy_60hz' or 'det50ms', "
+                f"got {timing_profile!r}"
+            )
+        if self.timing_profile == "legacy_60hz" and (self.speed_factor or 1) > 1:
+            raise ValueError("legacy_60hz timing only supports 1x speed.")
+        self._base_steps_per_second = 60
+        self._target_sim_time_per_action_s = self.steps_per_action / self._base_steps_per_second
+        self._desired_speed = self.speed_factor if self.speed_factor is not None else 1
+        if self.timing_profile == "legacy_60hz":
+            # Legacy/real-time timing: keep the same 60 Hz step grid that old
+            # checkpoints were trained on.
+            self._beamng_steps_per_second = self._base_steps_per_second
+            self._beamng_speed_factor = None
+            self._sim_time_per_beamng_step_s = 1.0 / self._base_steps_per_second
+            self._effective_steps_per_action = self.steps_per_action
+        else:
+            # BeamNG positive speedFactor values are not powers-of-two speed
+            # multipliers. Per BeamNG's deterministic-mode docs,
+            # speedFactor=1 means 50 ms of physics per rendered frame. Change
+            # the frame limiter to alter wall-clock pace while keeping the
+            # policy control interval near the 0.25 s baseline.
+            self._beamng_steps_per_second = 20 * self._desired_speed
+            self._beamng_speed_factor = 1
+            self._sim_time_per_beamng_step_s = 0.05
+            self._effective_steps_per_action = max(
+                1,
+                round(self._target_sim_time_per_action_s / self._sim_time_per_beamng_step_s),
+            )
+        self._sim_time_per_action_s = (
+            self._effective_steps_per_action * self._sim_time_per_beamng_step_s
+        )
+        if abs(self._sim_time_per_action_s - self._target_sim_time_per_action_s) > (1.0 / 120.0):
             print(
-                f"WARNING: speed_factor={_desired_speed} reduces effective_steps to 1 "
-                f"(would need <1 step for {self.steps_per_action}/{_desired_speed}); "
-                f"sim_time_per_action will be {_desired_speed / 60:.3f} s instead of "
-                f"{self.steps_per_action / 60:.3f} s."
+                f"WARNING: speed_factor={self._desired_speed} uses "
+                f"effective_steps={self._effective_steps_per_action}; "
+                f"sim_time_per_action={self._sim_time_per_action_s:.3f}s "
+                f"instead of target {self._target_sim_time_per_action_s:.3f}s."
             )
 
         # Runtime counters are reset in reset(), but initial values keep the
@@ -996,25 +1032,23 @@ class BeamNGRacingEnv(gym.Env):
             # Deterministic stepping plus pause mirrors beamng_bootstrap.py and
             # makes beamng.step(...) the clock source for RL actions.
             try:
-                desired_speed = self.speed_factor if self.speed_factor is not None else 1
-                # BeamNG.tech's deterministic API stores speedup as powers of
-                # two: 0 -> 1x, 1 -> 2x, 2 -> 4x, etc. The launcher exposes
-                # user-facing multipliers, so convert before calling BeamNGpy.
-                # When desired_speed=1, log2(1)=0, but speedFactor=0 is NOT
-                # real-time deterministic — omit it so BeamNG uses its default
-                # of -1 (1/fps per step), matching the original pre-slider
-                # behaviour.
-                beamng_speed_factor = int(math.log2(desired_speed)) if desired_speed > 1 else None
+                # BeamNG positive speedFactor values mean 50 ms chunks of
+                # physics per graphics frame. Use speedFactor=1 and the frame
+                # limiter to target faster wall-clock without changing the
+                # policy's sim-time between actions.
                 beamng.settings.set_nondeterministic()
-                beamng.settings.remove_step_limit()
-                beamng.settings.set_deterministic(60, speed_factor=beamng_speed_factor)
-                sim_time_s = self._effective_steps_per_action * desired_speed / 60
+                beamng.settings.set_deterministic(
+                    self._beamng_steps_per_second,
+                    speed_factor=self._beamng_speed_factor,
+                )
                 print(
                     "BeamNG deterministic mode set: "
-                    f"steps_per_second=60, requested_speed={desired_speed}x, "
-                    f"beamng_speed_factor={beamng_speed_factor}, "
+                    f"timing_profile={self.timing_profile}, "
+                    f"target_speed={self._desired_speed}x, "
+                    f"steps_per_second={self._beamng_steps_per_second}, "
+                    f"beamng_speed_factor={self._beamng_speed_factor}, "
                     f"effective_steps={self._effective_steps_per_action}, "
-                    f"sim_time_per_action={sim_time_s:.3f}s"
+                    f"sim_time_per_action={self._sim_time_per_action_s:.3f}s"
                 )
             except Exception as exc:
                 raise RuntimeError(

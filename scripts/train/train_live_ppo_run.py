@@ -219,6 +219,7 @@ def _build_run_config(
     env_config: dict[str, Any],
     vehicle_model: str,
     speed_factor: int | None,
+    timing_profile: str,
 ) -> dict[str, Any]:
     # Include config_key so run_config.json and run_info.md are self-documenting:
     # any reader can immediately see which experiment arm produced these results.
@@ -229,17 +230,32 @@ def _build_run_config(
             rollout_steps    = ROLLOUT_STEPS,
         ),
         "ppo":     PPO_CONFIG,
-        "env":     {**env_config, "vehicle_model": vehicle_model, "speed_factor": speed_factor},
+        "env":     {
+            **env_config,
+            "vehicle_model": vehicle_model,
+            "speed_factor": speed_factor,
+            "timing_profile": timing_profile,
+        },
         "reward":  {"config_key": reward_key, **vars(reward_config)},
     }
 
 
-def _ensure_car_suffix(run_name: str, vehicle_model: str, reward_key: str) -> str:
+def _ensure_car_suffix(
+    run_name: str,
+    vehicle_model: str,
+    reward_key: str,
+    speed_factor: int | None = None,
+) -> str:
     suffix = CAR_RUN_SUFFIXES[vehicle_model]
     base = run_name.strip() or f"{reward_key}_{suffix}"
     tokens = base.lower().replace("-", "_").split("_")
     if suffix not in tokens:
         base = f"{base}_{suffix}"
+        tokens = base.lower().replace("-", "_").split("_")
+    speed_value = int(speed_factor) if speed_factor is not None else 1
+    speed_suffix = f"{speed_value}x"
+    if speed_value > 1 and speed_suffix not in tokens:
+        base = f"{base}_{speed_suffix}"
     return base
 
 
@@ -249,15 +265,40 @@ def _run_vehicle_model(config: dict[str, Any]) -> str | None:
     return car if car in CAR_RUN_SUFFIXES else None
 
 
-def _can_resume_with_vehicle(config: dict[str, Any], vehicle_model: str) -> tuple[bool, str]:
+def _run_speed_factor(config: dict[str, Any]) -> int:
+    env = _as_mapping(config.get("env"))
+    try:
+        speed_factor = int(env.get("speed_factor", 1) or 1)
+    except (TypeError, ValueError):
+        return 1
+    return speed_factor if speed_factor in (1, 2, 4, 8, 16, 32) else 1
+
+
+def _run_timing_profile(config: dict[str, Any]) -> str:
+    env = _as_mapping(config.get("env"))
+    timing_profile = str(env.get("timing_profile", "")).strip().lower()
+    if timing_profile in ("legacy_60hz", "det50ms"):
+        return timing_profile
+    return "det50ms" if _run_speed_factor(config) > 1 else "legacy_60hz"
+
+
+def _can_resume_with_vehicle(
+    config: dict[str, Any],
+    vehicle_model: str,
+    timing_profile: str,
+) -> tuple[bool, str]:
     run_vehicle_model = _run_vehicle_model(config)
-    if run_vehicle_model == vehicle_model:
-        return True, ""
-    if run_vehicle_model is None and vehicle_model == "sbr":
-        return True, ""
-    if run_vehicle_model is None:
+    vehicle_matches = run_vehicle_model == vehicle_model or (
+        run_vehicle_model is None and vehicle_model == "sbr"
+    )
+    if not vehicle_matches and run_vehicle_model is None:
         return False, "has no saved vehicle metadata"
-    return False, f"was created for {run_vehicle_model}"
+    if not vehicle_matches:
+        return False, f"was created for {run_vehicle_model}"
+    run_timing_profile = _run_timing_profile(config)
+    if run_timing_profile != timing_profile:
+        return False, f"was created for {run_timing_profile} timing"
+    return True, ""
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +330,11 @@ def main() -> None:
     fresh           = args.fresh or bool(session.get("fresh", False))
     _sf             = session.get("speed_factor")
     speed_factor    = int(_sf) if _sf is not None else None
+    if speed_factor is not None and speed_factor not in (1, 2, 4, 8, 16, 32):
+        sys.exit("Error: speed_factor must be one of 1, 2, 4, 8, 16, 32.")
+    timing_profile = str(session.get("timing_profile", "")).strip().lower() or None
+    if timing_profile is not None and timing_profile not in ("legacy_60hz", "det50ms"):
+        sys.exit("Error: timing_profile must be 'legacy_60hz' or 'det50ms'.")
 
     # Resolve reward config key: CLI > launcher session > default "v1".
     reward_key = args.reward_config or str(session.get("reward_config", "v1"))
@@ -322,7 +368,14 @@ def main() -> None:
     # Resolve run name and resume checkpoint
     # ------------------------------------------------------------------
     if fresh:
-        run_name = _ensure_car_suffix(run_name_hint or prompt_run_name(), vehicle_model, reward_key)
+        if timing_profile is None:
+            timing_profile = "det50ms" if (speed_factor or 1) > 1 else "legacy_60hz"
+        run_name = _ensure_car_suffix(
+            run_name_hint or prompt_run_name(),
+            vehicle_model,
+            reward_key,
+            speed_factor,
+        )
         if rm.exists(run_name):
             sys.exit(
                 f"Error: run '{run_name}' already exists.\n"
@@ -338,6 +391,7 @@ def main() -> None:
                 env_config=env_config,
                 vehicle_model=vehicle_model,
                 speed_factor=speed_factor,
+                timing_profile=timing_profile,
             ),
         )
         print(f"Created run: {run_name}")
@@ -350,7 +404,13 @@ def main() -> None:
         if not rm.exists(run_name):
             sys.exit(f"Run '{run_name}' not found. Use --fresh to create it.")
         existing_config = rm.load_config(run_name)
-        can_resume, reason = _can_resume_with_vehicle(existing_config, vehicle_model)
+        if timing_profile is None:
+            timing_profile = _run_timing_profile(existing_config)
+        can_resume, reason = _can_resume_with_vehicle(
+            existing_config,
+            vehicle_model,
+            timing_profile,
+        )
         if not can_resume:
             sys.exit(
                 f"Run '{run_name}' {reason}, "
@@ -376,6 +436,7 @@ def main() -> None:
         print(f"\nReward config  : {reward_key}")
         print(f"Vehicle        : {vehicle_model}")
         print(f"Speed factor   : {speed_factor if speed_factor is not None else 'default'}x")
+        print(f"Timing profile : {timing_profile}")
         for field_name, value in vars(reward_config).items():
             print(f"  {field_name}: {value}")
 
@@ -388,6 +449,7 @@ def main() -> None:
             vehicle_model=vehicle_model,
             reward_config=reward_config,
             speed_factor=speed_factor,
+            timing_profile=timing_profile,
             **env_config,
         )
 

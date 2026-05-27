@@ -50,6 +50,7 @@ CAR_RUN_SUFFIXES = {
     "etkc": "etk",
 }
 SPEED_FACTORS = {1, 2, 4, 8, 16, 32}
+TIMING_PROFILES = {"legacy_60hz", "det50ms"}
 REWARD_CONFIG_KEYS = {"v1", "v2"}
 
 PYTHON_EXE = REPO_ROOT / "venv" / "Scripts" / "python.exe"
@@ -209,21 +210,69 @@ def _run_vehicle_model(run_name: str) -> str | None:
     return car if car in CAR_LABELS else None
 
 
+def _normalize_speed_factor(value) -> int:
+    try:
+        speed_factor = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return speed_factor if speed_factor in SPEED_FACTORS else 1
+
+
+def _run_speed_factor(run_name: str) -> int:
+    config = rm.load_config(run_name)
+    env = config.get("env", {})
+    return _normalize_speed_factor(env.get("speed_factor", 1))
+
+
+def _run_timing_profile(run_name: str) -> str:
+    config = rm.load_config(run_name)
+    env = config.get("env", {})
+    timing_profile = str(env.get("timing_profile", "")).strip().lower()
+    if timing_profile in TIMING_PROFILES:
+        return timing_profile
+    return "det50ms" if _run_speed_factor(run_name) > 1 else "legacy_60hz"
+
+
+def _fresh_timing_profile(speed_factor: int) -> str:
+    return "det50ms" if speed_factor > 1 else "legacy_60hz"
+
+
+def _requested_timing_profile(run_name: str, speed_factor: int) -> str:
+    run_timing_profile = _run_timing_profile(run_name)
+    if run_timing_profile == "det50ms":
+        return "det50ms"
+    return _fresh_timing_profile(speed_factor)
+
+
 def _run_details(run_name: str) -> dict:
     car = _run_vehicle_model(run_name)
+    speed_factor = _run_speed_factor(run_name)
+    timing_profile = _run_timing_profile(run_name)
     return {
         "car": car,
         "car_label": CAR_LABELS.get(car, "Unknown vehicle"),
         "has_vehicle_metadata": car is not None,
+        "speed_factor": speed_factor,
+        "speed_label": f"{speed_factor}x",
+        "timing_profile": timing_profile,
     }
 
 
-def _ensure_car_suffix(run_name: str, car: str, reward_config: str) -> str:
+def _ensure_car_suffix(
+    run_name: str,
+    car: str,
+    reward_config: str,
+    speed_factor: int = 1,
+) -> str:
     suffix = CAR_RUN_SUFFIXES[car]
     base = run_name.strip() or f"{reward_config}_{suffix}"
     tokens = base.lower().replace("-", "_").split("_")
     if suffix not in tokens:
         base = f"{base}_{suffix}"
+        tokens = base.lower().replace("-", "_").split("_")
+    speed_suffix = f"{speed_factor}x"
+    if speed_factor > 1 and speed_suffix not in tokens:
+        base = f"{base}_{speed_suffix}"
     return base
 
 
@@ -239,6 +288,13 @@ def _can_resume_with_car(run_name: str, car: str) -> tuple[bool, str]:
         else "it has no saved vehicle metadata"
     )
     return False, reason
+
+
+def _can_resume_with_timing(run_name: str, timing_profile: str) -> tuple[bool, str]:
+    run_timing_profile = _run_timing_profile(run_name)
+    if run_timing_profile == timing_profile:
+        return True, ""
+    return False, f"it was created for {run_timing_profile} timing"
 
 
 def _get_obs_password() -> str:
@@ -274,7 +330,10 @@ def api_status():
     run_info = _get_active_run_info()
     session = _load_session_config()
     car = str(session.get("car", "sbr")).strip().lower()
-    speed_factor = int(session.get("speed_factor", 1) or 1)
+    speed_factor = _normalize_speed_factor(session.get("speed_factor", 1))
+    timing_profile = str(session.get("timing_profile", "")).strip().lower()
+    if timing_profile not in TIMING_PROFILES:
+        timing_profile = _fresh_timing_profile(speed_factor)
     eta = _eta_seconds(
         run_info["current_steps"],
         run_info["total_steps"],
@@ -292,6 +351,7 @@ def api_status():
         "max_damage": session.get("max_damage"),
         "prev_max_damage": session.get("prev_max_damage"),
         "speed_factor": speed_factor,
+        "timing_profile": timing_profile,
         "reward_config": session.get("reward_config", "v1"),
         "car": car,
         "car_label": CAR_LABELS.get(car, car),
@@ -356,7 +416,10 @@ def api_launch():
     timesteps = int(data.get("timesteps", 100_000))
     stream = bool(data.get("stream", mode == "training"))
     max_damage = float(data.get("max_damage", 500.0))
-    speed_factor = int(data.get("speed_factor", 1))
+    try:
+        speed_factor = int(data.get("speed_factor", 1))
+    except (TypeError, ValueError):
+        speed_factor = 0
     if speed_factor not in SPEED_FACTORS:
         return jsonify({
             "ok": False,
@@ -370,6 +433,7 @@ def api_launch():
             "ok": False,
             "message": f"Unknown reward config {reward_config!r}. Choose one of: {sorted(REWARD_CONFIG_KEYS)}",
         }), 400
+    timing_profile = _fresh_timing_profile(speed_factor)
 
     if mode == "stream_only":
         session = _load_session_config()
@@ -382,6 +446,7 @@ def api_launch():
             "stream": stream,
             "max_damage": max_damage,
             "speed_factor": speed_factor,
+            "timing_profile": timing_profile,
             "reward_config": reward_config,
         })
         _save_session_config(session)
@@ -394,7 +459,7 @@ def api_launch():
         return jsonify({"ok": True, "message": "BeamNG launched standalone."})
 
     if fresh:
-        run_name = _ensure_car_suffix(run_name, car, reward_config)
+        run_name = _ensure_car_suffix(run_name, car, reward_config, speed_factor)
     else:
         resume_name = run_name or rm.find_latest_run()
         if not resume_name:
@@ -411,6 +476,16 @@ def api_launch():
                     "Start a fresh run for this car."
                 ),
             }), 409
+        timing_profile = _requested_timing_profile(resume_name, speed_factor)
+        can_resume, reason = _can_resume_with_timing(resume_name, timing_profile)
+        if not can_resume:
+            return jsonify({
+                "ok": False,
+                "message": (
+                    f"Cannot resume '{resume_name}' with {timing_profile} because {reason}. "
+                    "Start a fresh run for this timing mode."
+                ),
+            }), 409
         run_name = resume_name
 
     session = _load_session_config()
@@ -423,6 +498,7 @@ def api_launch():
         "stream": stream,
         "max_damage": max_damage,
         "speed_factor": speed_factor,
+        "timing_profile": timing_profile,
         "reward_config": reward_config,
     })
     _save_session_config(session)
