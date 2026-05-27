@@ -283,12 +283,12 @@ def api_launch():
 
 @app.route("/api/stop/training", methods=["POST"])
 def api_stop_training():
-    pid = _get_training_pid()
-    if pid is None:
+    if not _is_training():
         return jsonify({"ok": False, "message": "No training process found."})
-    # Snapshot step count before the process disappears.
     current_steps = _read_live_steps() or _pace["steps"]
-    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+    pid = _get_training_pid()
+    if pid is not None:
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
     subprocess.run(
         ["wmic", "process", "where",
          "name='python.exe' and commandline like '%train_live_ppo_run%'",
@@ -296,7 +296,7 @@ def api_stop_training():
         capture_output=True,
     )
     _finalize_stopped_run(current_steps)
-    return jsonify({"ok": True, "message": f"Stopped PID {pid} and finalized run."})
+    return jsonify({"ok": True, "message": "Training stopped and finalized."})
 
 
 def _finalize_stopped_run(current_steps: int) -> None:
