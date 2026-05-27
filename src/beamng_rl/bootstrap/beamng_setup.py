@@ -85,6 +85,10 @@ def build_hirochi_etkc_scenario(
 
     scenario.add_vehicle(vehicle, pos=SPAWN_POS, rot_quat=SPAWN_ROT)
     scenario.make(bng)
+    # scenario.make(bng)
+    print(f"Scenario written: {getattr(scenario, 'path', 'unknown')}")
+    return scenario, vehicle
+
     return scenario, vehicle
 
 
