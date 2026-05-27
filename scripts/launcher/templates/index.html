@@ -384,6 +384,12 @@
     margin-bottom: 14px;
   }
 
+  .progress-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
   .progress-meta {
     display: flex;
     justify-content: space-between;
@@ -673,7 +679,7 @@
       <div class="panel-section" id="stream-section">
         <div class="section-label">Streaming</div>
         <label class="toggle-row">
-          <input type="checkbox" id="stream-toggle">
+          <input type="checkbox" id="stream-toggle" checked>
           <div class="toggle-switch"></div>
           <span>Enable OBS Stream</span>
         </label>
@@ -694,6 +700,7 @@
 
       <!-- Progress -->
       <div class="panel-section progress-wrap">
+        <div class="progress-title" id="training-car-title">No active training</div>
         <div class="progress-meta">
           <span id="progress-text">0 / 100,000 steps</span>
           <span id="eta-text">—</span>
@@ -755,11 +762,25 @@
 // ── State ────────────────────────────────────────────────────
 let isTraining = false;
 let toastTimer = null;
+let userTouchedCar = false;
 const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
-function stepsPerSecond() { return measuredStepsPerSecond ?? STEPS_PER_SECOND_FALLBACK; }
 
 const SPEED_FACTORS = [1, 2, 4, 8, 16, 32];
+const CAR_LABELS = {
+  sbr: 'SBR4 Track',
+  etkc: 'ETK K-Series Trackday A',
+};
+
+function selectedSpeedFactor() {
+  const slider = document.getElementById('speed-slider');
+  const sf = SPEED_FACTORS[parseInt(slider.value)];
+  return Number.isFinite(sf) ? sf : 1;
+}
+
+function stepsPerSecond() {
+  return measuredStepsPerSecond ?? (STEPS_PER_SECOND_FALLBACK * selectedSpeedFactor());
+}
 
 // ── Init ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -785,6 +806,7 @@ function initRadioGroups() {
       el.querySelector('input[type="radio"]').checked = true;
       if (group === 'mode') onModeChange(el.dataset.value);
       if (group === 'run_mode') onRunModeChange(el.dataset.value);
+      if (group === 'car') userTouchedCar = true;
     });
   });
 }
@@ -830,6 +852,7 @@ function updateSpeedDisplay() {
   const idx = parseInt(document.getElementById('speed-slider').value);
   const sf = SPEED_FACTORS[idx];
   document.getElementById('speed-val').textContent = sf + 'x';
+  updateSliderDisplay();
   document.getElementById('speed-sub').textContent = sf === 1 ? 'real-time' : sf + '× faster than real-time';
 }
 
@@ -843,6 +866,14 @@ function setSpeedSliderFromValue(sf) {
 
 function setRewardConfig(key) {
   document.querySelectorAll('.radio-option[data-group="reward"]').forEach(el => {
+    const match = el.dataset.value === key;
+    el.classList.toggle('selected', match);
+    el.querySelector('input[type="radio"]').checked = match;
+  });
+}
+
+function setCarSelection(key) {
+  document.querySelectorAll('.radio-option[data-group="car"]').forEach(el => {
     const match = el.dataset.value === key;
     el.classList.toggle('selected', match);
     el.querySelector('input[type="radio"]').checked = match;
@@ -888,6 +919,10 @@ async function pollStatus() {
       document.getElementById('header-run-info').textContent = '—';
     }
 
+    document.getElementById('training-car-title').textContent = d.is_training
+      ? `Training: ${d.car_label || CAR_LABELS[d.car] || 'Selected car'}`
+      : 'No active training';
+
     // Progress bar
     const pct = d.is_training && d.total_steps > 0
       ? Math.min(100, (d.current_steps / d.total_steps) * 100)
@@ -900,6 +935,9 @@ async function pollStatus() {
     // Update measured pace so slider estimate stays accurate after steps_per_action changes.
     if (d.steps_per_second != null) {
       measuredStepsPerSecond = d.steps_per_second;
+      updateSliderDisplay();
+    } else {
+      measuredStepsPerSecond = null;
       updateSliderDisplay();
     }
 
@@ -924,6 +962,7 @@ async function pollStatus() {
     // Restore speed factor and reward config from last saved session
     if (!isTraining && d.speed_factor != null) setSpeedSliderFromValue(d.speed_factor);
     if (!isTraining && d.reward_config != null) setRewardConfig(d.reward_config);
+    if (!isTraining && d.car != null && !userTouchedCar) setCarSelection(d.car);
 
     // Damage meta
     if (d.max_damage != null) {
@@ -975,7 +1014,7 @@ async function launch() {
     ? document.getElementById('fresh-name').value.trim()
     : document.getElementById('resume-select').value;
   const timesteps    = parseInt(document.getElementById('steps-slider').value);
-  const stream       = document.getElementById('stream-toggle').checked;
+  const stream       = mode === 'training' || document.getElementById('stream-toggle').checked;
   const maxDamage    = parseFloat(document.getElementById('damage-input').value) || 500;
   const speedFactor  = SPEED_FACTORS[parseInt(document.getElementById('speed-slider').value)];
   const rewardConfig = document.querySelector('input[name="reward"]:checked').value;
