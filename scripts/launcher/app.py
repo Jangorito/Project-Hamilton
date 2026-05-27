@@ -72,6 +72,13 @@ def _is_beamng_running() -> bool:
     return "beamng.tech.x64.exe" in result.stdout.lower()
 
 
+def _kill_beamng() -> None:
+    subprocess.run(
+        ["taskkill", "/F", "/IM", "BeamNG.tech.x64.exe", "/T"],
+        capture_output=True,
+    )
+
+
 def _get_training_pid() -> int | None:
     if not PID_FILE.exists():
         return None
@@ -200,6 +207,7 @@ def api_status():
         "max_damage": session.get("max_damage"),
         "prev_max_damage": session.get("prev_max_damage"),
         "speed_factor": session.get("speed_factor", 1),
+        "reward_config": session.get("reward_config", "v1"),
     })
 
 
@@ -253,6 +261,9 @@ def api_launch():
     stream = bool(data.get("stream", False))
     max_damage = float(data.get("max_damage", 500.0))
     speed_factor = int(data.get("speed_factor", 1))
+    # Reward config key ("v1" or "v2"). Written into launcher_session.json so
+    # train_live_ppo_run.py picks it up without needing a CLI flag from schtasks.
+    reward_config = str(data.get("reward_config", "v1"))
 
     session = _load_session_config()
     session.update({
@@ -263,12 +274,15 @@ def api_launch():
         "stream": stream,
         "max_damage": max_damage,
         "speed_factor": speed_factor,
+        "reward_config": reward_config,
     })
     _save_session_config(session)
 
     if mode == "stream_only":
         _obs_action("start")
         return jsonify({"ok": True, "message": "Stream started."})
+
+    _kill_beamng()
 
     if mode == "beamng_only":
         subprocess.run(["schtasks", "/run", "/tn", "BeamNGDirect"], capture_output=True)

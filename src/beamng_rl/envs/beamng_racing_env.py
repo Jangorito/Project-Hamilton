@@ -82,6 +82,75 @@ class RewardConfig:
     curvature_speed_scale: float = 700.0        # m/s per (1/m) of curvature
 
 
+# ---------------------------------------------------------------------------
+# Reward config registry — named presets for controlled experiments.
+#
+# Both V1 and V2 run the same car (etkc) on the same track. Selecting by key
+# rather than hand-editing values ensures both conditions are always
+# launchable from the same codebase with a single flag change, with no risk
+# of accidentally running the wrong reward between experiment arms.
+#
+# Usage:  reward_config = REWARD_CONFIGS["v1"]
+# ---------------------------------------------------------------------------
+REWARD_CONFIGS: dict[str, RewardConfig] = {
+    # V1 — baseline reward, matches the RewardConfig dataclass defaults.
+    # Used as the control condition in the V1/V2 experiment.
+    "v1": RewardConfig(
+        progress_weight=1.0,
+        speed_weight=0.05,            # flat speed bonus — encourages forward velocity but subsidises corner entry speed
+        heading_error_weight=0.2,
+        lateral_error_weight=0.1,     # full centreline constraint
+        off_track_penalty=10.0,
+        reverse_progress_penalty=2.0,
+        stuck_step_penalty=0.05,
+        action_smoothness_weight=0.1,    # weak smoothness — insufficient to prevent steering oscillation
+        curvature_overspeed_weight=0.15, # partially cancelled by speed_weight subsidy
+        curvature_target_speed_base=35.0,
+        curvature_target_speed_min=12.0,
+        curvature_speed_scale=700.0,
+    ),
+    # V2 — literature-informed tweaks. Four targeted changes from V1:
+    #
+    # 1. speed_weight removed (0.05 -> 0.0):
+    #    GT Sport RL paper (Fuchs et al.) used progress-only reward successfully.
+    #    Progress implicitly rewards speed; an explicit speed bonus creates a
+    #    subsidy that partially cancels the curvature overspeed penalty on corner
+    #    entry.
+    #
+    # 2. action_smoothness_weight raised (0.1 -> 0.4):
+    #    TORCS-based racing RL literature (Guckiran & Bolat) identifies fast
+    #    left-right steering oscillation (slaloming) as a reward function problem.
+    #    SBR4 rollout data confirms full-lock steering swings every 1-3 steps;
+    #    the 0.1 penalty costs ~0.2 reward vs ~4-6 from progress — effectively
+    #    ignored. Raising to 0.4 makes jerk meaningfully costly.
+    #
+    # 3. lateral_error_weight halved (0.1 -> 0.05):
+    #    Racing RL literature notes that strict centreline constraint can prevent
+    #    the agent from discovering wider out-in-out racing lines. Relaxing this
+    #    allows more lateral freedom while the heading penalty still discourages
+    #    spinning.
+    #
+    # 4. curvature_overspeed_weight raised (0.15 -> 0.3):
+    #    With speed_weight removed the curvature penalty no longer fights a
+    #    subsidy, so it can be stronger without over-penalising straight-line
+    #    speed.
+    "v2": RewardConfig(
+        progress_weight=1.0,
+        speed_weight=0.0,
+        heading_error_weight=0.2,
+        lateral_error_weight=0.05,
+        off_track_penalty=10.0,
+        reverse_progress_penalty=2.0,
+        stuck_step_penalty=0.05,
+        action_smoothness_weight=0.4,
+        curvature_overspeed_weight=0.3,
+        curvature_target_speed_base=35.0,
+        curvature_target_speed_min=12.0,
+        curvature_speed_scale=700.0,
+    ),
+}
+
+
 @dataclass
 class TerminationResult:
     """Inspectable outcome of the environment termination checks."""
