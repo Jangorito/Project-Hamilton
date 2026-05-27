@@ -335,6 +335,7 @@ def main() -> None:
     timing_profile = str(session.get("timing_profile", "")).strip().lower() or None
     if timing_profile is not None and timing_profile not in ("legacy_60hz", "det50ms"):
         sys.exit("Error: timing_profile must be 'legacy_60hz' or 'det50ms'.")
+    debug_mode = bool(session.get("debug_mode", False))
 
     # Resolve reward config key: CLI > launcher session > default "v1".
     reward_key = args.reward_config or str(session.get("reward_config", "v1"))
@@ -411,7 +412,7 @@ def main() -> None:
             vehicle_model,
             timing_profile,
         )
-        if not can_resume:
+        if not can_resume and not debug_mode:
             sys.exit(
                 f"Run '{run_name}' {reason}, "
                 f"but launcher selected {vehicle_model}. Start a fresh run "
