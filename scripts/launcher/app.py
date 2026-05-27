@@ -18,7 +18,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_file, Response
+import shutil
+
+from flask import Flask, jsonify, render_template, request
 
 LAUNCHER_DIR = Path(__file__).resolve().parent
 REPO_ROOT = LAUNCHER_DIR.parents[1]
@@ -34,7 +36,6 @@ from beamng_rl.training.run_manager import RunManager
 LOG_DIR = REPO_ROOT / "logs" / "remote"
 PID_FILE = LOG_DIR / "training.pid"
 LOG_LINK = LOG_DIR / "latest.log"
-SCREENSHOT_PATH = LOG_DIR / "obs_screenshot.png"
 PROGRESS_FILE = LOG_DIR / "current_steps.txt"
 SESSION_CONFIG_PATH = REPO_ROOT / "config" / "launcher_session.json"
 
@@ -237,38 +238,9 @@ def _resolve_log_path() -> Path | None:
     return logs[0] if logs else None
 
 
-@app.route("/api/screenshot")
-def api_screenshot():
-    if not SCREENSHOT_PATH.exists():
-        return Response(status=204)
-    return send_file(SCREENSHOT_PATH, mimetype="image/png")
-
-
 # ---------------------------------------------------------------------------
 # Routes — actions
 # ---------------------------------------------------------------------------
-
-@app.route("/api/screenshot/refresh", methods=["POST"])
-def api_screenshot_refresh():
-    _take_screenshot()
-    return jsonify({"ok": True})
-
-
-def _take_screenshot():
-    args = [
-        str(PYTHON_EXE),
-        str(REPO_ROOT / "scripts" / "env" / "obs_control.py"),
-        "--port", str(OBS_PORT),
-        "--output", str(SCREENSHOT_PATH),
-        "screenshot",
-    ]
-    if OBS_PASSWORD:
-        args += ["--password", OBS_PASSWORD]
-    try:
-        subprocess.run(args, capture_output=True, timeout=10, cwd=str(REPO_ROOT))
-    except Exception:
-        pass
-
 
 @app.route("/api/launch", methods=["POST"])
 def api_launch():
@@ -314,6 +286,8 @@ def api_stop_training():
     pid = _get_training_pid()
     if pid is None:
         return jsonify({"ok": False, "message": "No training process found."})
+    # Snapshot step count before the process disappears.
+    current_steps = _read_live_steps() or _pace["steps"]
     subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
     subprocess.run(
         ["wmic", "process", "where",
@@ -321,7 +295,34 @@ def api_stop_training():
          "call", "terminate"],
         capture_output=True,
     )
-    return jsonify({"ok": True, "message": f"Killed PID {pid}."})
+    _finalize_stopped_run(current_steps)
+    return jsonify({"ok": True, "message": f"Stopped PID {pid} and finalized run."})
+
+
+def _finalize_stopped_run(current_steps: int) -> None:
+    """Write the same end-of-run artifacts that normal training completion would produce."""
+    run_name = rm.find_latest_run()
+    PROGRESS_FILE.unlink(missing_ok=True)
+    if not run_name:
+        return
+    # Copy latest checkpoint to model_final.zip so there's a usable final model.
+    ckpt = rm.find_latest_checkpoint(run_name)
+    if ckpt:
+        try:
+            shutil.copy2(ckpt, rm.run_dir(run_name) / "model_final.zip")
+        except OSError:
+            pass
+    config = rm.load_config(run_name)
+    total_steps = config.get("training", {}).get("total_timesteps", 0)
+    results = {
+        "status": "stopped_early",
+        "steps_completed": current_steps,
+        "total_planned": total_steps,
+    }
+    try:
+        rm.finalize_run(run_name, results)
+    except Exception:
+        pass
 
 
 @app.route("/api/stop/stream", methods=["POST"])
