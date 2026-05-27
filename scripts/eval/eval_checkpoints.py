@@ -76,7 +76,17 @@ def main() -> None:
     out_csv = rm.log_dir(run_name) / "checkpoints_eval.csv"
     rm.log_dir(run_name).mkdir(parents=True, exist_ok=True)
 
+    run_cfg = rm.load_config(run_name)
+    vehicle_model = run_cfg.get("env", {}).get("vehicle_model", "").strip().lower()
+    if vehicle_model not in ("sbr", "etkc"):
+        print(
+            f"Warning: vehicle_model not found in run_config.json for run '{run_name}'"
+            " — defaulting to 'etkc'."
+        )
+        vehicle_model = "etkc"
+
     print(f"Run      : {run_name}")
+    print(f"Vehicle  : {vehicle_model}")
     print(f"Found    : {len(checkpoints)} checkpoints")
     print(f"Steps    : {args.steps} per rollout")
     print("Launching BeamNG...")
@@ -91,6 +101,7 @@ def main() -> None:
             launch_beamng=True,
             live_spawn_mode="bootstrap",
             vehicle_id="ego_vehicle",
+            vehicle_model=vehicle_model,
             steps_per_action=15,
             max_episode_steps=500,
             max_lateral_error_m=10.0,
