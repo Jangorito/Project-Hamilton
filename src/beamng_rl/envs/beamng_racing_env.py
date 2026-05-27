@@ -300,6 +300,16 @@ class BeamNGRacingEnv(gym.Env):
                 "speed_factor must be one of 1, 2, 4, 8, 16, 32, "
                 f"got {speed_factor!r}"
             )
+        _desired_speed = self.speed_factor if self.speed_factor is not None else 1
+        _raw_steps = round(self.steps_per_action / _desired_speed)
+        self._effective_steps_per_action: int = max(1, _raw_steps)
+        if _raw_steps < 1:
+            print(
+                f"WARNING: speed_factor={_desired_speed} reduces effective_steps to 1 "
+                f"(would need <1 step for {self.steps_per_action}/{_desired_speed}); "
+                f"sim_time_per_action will be {_desired_speed / 60:.3f} s instead of "
+                f"{self.steps_per_action / 60:.3f} s."
+            )
 
         # Runtime counters are reset in reset(), but initial values keep the
         # object inspectable immediately after construction.
@@ -771,11 +781,12 @@ class BeamNGRacingEnv(gym.Env):
                 #
                 # TODO: expose the deterministic steps-per-second setting once
                 # training needs tighter control over policy frequency.
-                self.beamng.step(self.steps_per_action, wait=True)
+                self.beamng.step(self._effective_steps_per_action, wait=True)
             except Exception as exc:
                 raise RuntimeError(
                     "Failed to advance BeamNG simulation by "
-                    f"{self.steps_per_action} step(s): {exc!r}"
+                    f"{self._effective_steps_per_action} step(s) "
+                    f"(config steps_per_action={self.steps_per_action}): {exc!r}"
                 ) from exc
             return
 
@@ -985,18 +996,25 @@ class BeamNGRacingEnv(gym.Env):
             # Deterministic stepping plus pause mirrors beamng_bootstrap.py and
             # makes beamng.step(...) the clock source for RL actions.
             try:
-                desired_speed = self.speed_factor or 1
+                desired_speed = self.speed_factor if self.speed_factor is not None else 1
                 # BeamNG.tech's deterministic API stores speedup as powers of
                 # two: 0 -> 1x, 1 -> 2x, 2 -> 4x, etc. The launcher exposes
                 # user-facing multipliers, so convert before calling BeamNGpy.
-                beamng_speed_factor = int(math.log2(desired_speed))
+                # When desired_speed=1, log2(1)=0, but speedFactor=0 is NOT
+                # real-time deterministic — omit it so BeamNG uses its default
+                # of -1 (1/fps per step), matching the original pre-slider
+                # behaviour.
+                beamng_speed_factor = int(math.log2(desired_speed)) if desired_speed > 1 else None
                 beamng.settings.set_nondeterministic()
                 beamng.settings.remove_step_limit()
                 beamng.settings.set_deterministic(60, speed_factor=beamng_speed_factor)
+                sim_time_s = self._effective_steps_per_action * desired_speed / 60
                 print(
                     "BeamNG deterministic mode set: "
                     f"steps_per_second=60, requested_speed={desired_speed}x, "
-                    f"beamng_speed_factor={beamng_speed_factor}"
+                    f"beamng_speed_factor={beamng_speed_factor}, "
+                    f"effective_steps={self._effective_steps_per_action}, "
+                    f"sim_time_per_action={sim_time_s:.3f}s"
                 )
             except Exception as exc:
                 raise RuntimeError(
