@@ -980,6 +980,16 @@ class BeamNGRacingEnv(gym.Env):
             # makes beamng.step(...) the clock source for RL actions.
             try:
                 beamng.settings.set_deterministic(60, speed_factor=self.speed_factor)
+                print(
+                    "BeamNG deterministic mode set: "
+                    f"steps_per_second=60, speed_factor={self.speed_factor or 'default'}"
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to set BeamNG deterministic timing. "
+                    "Restart BeamNG and verify the selected speed factor."
+                ) from exc
+            try:
                 beamng.pause()
             except Exception:
                 pass
@@ -992,6 +1002,7 @@ class BeamNGRacingEnv(gym.Env):
                 "sbr": build_hirochi_sbr_scenario,
                 "etkc": build_hirochi_etkc_scenario,
             }
+            print(f"Building Hirochi scenario for vehicle_model={self.vehicle_model}")
             _scenario_builder = scenario_builders[self.vehicle_model]
             scenario, vehicle = _scenario_builder(
                 beamng,
