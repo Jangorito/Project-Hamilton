@@ -950,7 +950,8 @@ function validateResumeCarChoice() {
   if (!runName) return;
   const details = runDetails[runName] || {};
   const car = selectedCar();
-  if (!details.car || details.car !== car) {
+  const canResume = details.car === car || (!details.car && car === 'sbr');
+  if (!canResume) {
     setRunMode('fresh');
     updateFreshNameSuggestion();
     const reason = details.car_label && details.car

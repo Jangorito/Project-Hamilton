@@ -227,6 +227,20 @@ def _ensure_car_suffix(run_name: str, car: str, reward_config: str) -> str:
     return base
 
 
+def _can_resume_with_car(run_name: str, car: str) -> tuple[bool, str]:
+    run_car = _run_vehicle_model(run_name)
+    if run_car == car:
+        return True, ""
+    if run_car is None and car == "sbr":
+        return True, ""
+    reason = (
+        f"it is tagged as {CAR_LABELS[run_car]}"
+        if run_car
+        else "it has no saved vehicle metadata"
+    )
+    return False, reason
+
+
 def _get_obs_password() -> str:
     if OBS_PASSWORD:
         return OBS_PASSWORD
@@ -388,13 +402,8 @@ def api_launch():
                 "ok": False,
                 "message": "No run selected to resume. Start a fresh run.",
             }), 400
-        run_car = _run_vehicle_model(resume_name)
-        if run_car != car:
-            reason = (
-                f"it is tagged as {CAR_LABELS[run_car]}"
-                if run_car
-                else "it has no saved vehicle metadata"
-            )
+        can_resume, reason = _can_resume_with_car(resume_name, car)
+        if not can_resume:
             return jsonify({
                 "ok": False,
                 "message": (
