@@ -24,6 +24,8 @@ SPAWN_ROT = (-0.0001524259429, 0.0005056571858, -0.2886135897, 0.9574455164)
 
 SHADOWS_DISABLE_SETTING_KEY = "GraphicDisableShadows"
 SHADOWS_DISABLE_ALL = "2"
+ETKC_TRACKDAY_CONFIG = "vehicles/etkc/kc6x_trackday_A.pc"
+SBR_TRACK_CONFIG = "vehicles/sbr/track.pc"
 
 
 def resolve_beamng_home_from_path_or_env(beamng_home: str | Path | None = None) -> Path:
@@ -72,10 +74,11 @@ def build_hirochi_etkc_scenario(
         description="ETK K-Series Trackday bootstrap scenario",
     )
 
+    print(f"BeamNG vehicle config: jBeam=etkc, partConfig={ETKC_TRACKDAY_CONFIG}")
     vehicle = Vehicle(
         vehicle_id,
         model="etkc",
-        part_config="vehicles/etkc/kc6x_trackday_A.pc",
+        part_config=ETKC_TRACKDAY_CONFIG,
         license="JANGO",
         color="Blue",
     )
@@ -103,10 +106,11 @@ def build_hirochi_sbr_scenario(
         description="SBR4 Track bootstrap scenario",
     )
 
+    print(f"BeamNG vehicle config: jBeam=sbr, partConfig={SBR_TRACK_CONFIG}")
     vehicle = Vehicle(
         vehicle_id,
         model="sbr",
-        part_config="vehicles/sbr/track.pc",
+        part_config=SBR_TRACK_CONFIG,
         license="JANGO",
         color="Red",
     )
