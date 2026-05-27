@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from stable_baselines3.common.callbacks import BaseCallback
@@ -101,3 +102,26 @@ class RewardComponentLogger(BaseCallback):
         self._sums = defaultdict(float)
         self._term_counts = defaultdict(int)
         self._n = 0
+
+
+class StepProgressWriter(BaseCallback):
+    """Writes num_timesteps to a file after each rollout so the launcher UI shows real progress.
+
+    The file contains a single integer (the current timestep count). The launcher
+    reads it via /api/status instead of inferring progress from checkpoint filenames,
+    which only update every CHECKPOINT_EVERY steps and miss the final steps entirely.
+    """
+
+    def __init__(self, path: Path | str, verbose: int = 0) -> None:
+        super().__init__(verbose)
+        self._path = Path(path)
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(str(self.num_timesteps), encoding="utf-8")
+        except OSError:
+            pass

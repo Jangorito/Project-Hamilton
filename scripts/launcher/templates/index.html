@@ -768,7 +768,9 @@
 let isTraining = false;
 let screenshotTimer = null;
 let toastTimer = null;
-const STEPS_PER_SECOND = 27000 / 7200;
+const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
+let measuredStepsPerSecond = null;
+function stepsPerSecond() { return measuredStepsPerSecond ?? STEPS_PER_SECOND_FALLBACK; }
 
 // ── Init ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -824,7 +826,7 @@ function initSlider() {
 
 function updateSliderDisplay() {
   const val = parseInt(document.getElementById('steps-slider').value);
-  const hours = val / STEPS_PER_SECOND / 3600;
+  const hours = val / stepsPerSecond() / 3600;
   document.getElementById('steps-val').textContent  = val.toLocaleString();
   document.getElementById('steps-time').textContent = `~${hours.toFixed(1)} hours`;
 }
@@ -875,6 +877,12 @@ async function pollStatus() {
     document.getElementById('progress-fill').style.width = pct + '%';
     document.getElementById('progress-text').textContent =
       `${(d.current_steps||0).toLocaleString()} / ${(d.total_steps||0).toLocaleString()} steps`;
+
+    // Update measured pace so slider estimate stays accurate after steps_per_action changes.
+    if (d.steps_per_second != null) {
+      measuredStepsPerSecond = d.steps_per_second;
+      updateSliderDisplay();
+    }
 
     // ETA
     document.getElementById('eta-text').textContent =

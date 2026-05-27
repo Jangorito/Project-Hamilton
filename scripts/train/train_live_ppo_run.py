@@ -37,7 +37,7 @@ from typing import Any
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -53,7 +53,7 @@ except ImportError as exc:
     ) from exc
 
 from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv, RewardConfig
-from beamng_rl.training.callbacks import RewardComponentLogger
+from beamng_rl.training.callbacks import RewardComponentLogger, StepProgressWriter
 from beamng_rl.training.run_manager import RunManager, prompt_run_name
 
 # ---------------------------------------------------------------------------
@@ -78,6 +78,9 @@ def _load_session_config() -> dict:
 TOTAL_TIMESTEPS  = 100_000
 CHECKPOINT_EVERY = 8_000
 ROLLOUT_STEPS    = 500
+
+# Written every rollout so the launcher UI can show real-time step progress.
+_PROGRESS_FILE = REPO_ROOT / "logs" / "remote" / "current_steps.txt"
 
 # ---------------------------------------------------------------------------
 # Env / PPO config — all values here are captured in run_config.json
@@ -316,7 +319,12 @@ def main() -> None:
         print(f"  TensorBoard : tensorboard --logdir {log_dir.parent}")
         print(f"  Checkpoints : {checkpoint_dir}")
 
-        model.learn(total_timesteps=total_timesteps, callback=[checkpoint_cb, RewardComponentLogger()])
+        _PROGRESS_FILE.unlink(missing_ok=True)
+        model.learn(
+            total_timesteps=total_timesteps,
+            callback=[checkpoint_cb, RewardComponentLogger(), StepProgressWriter(_PROGRESS_FILE)],
+        )
+        _PROGRESS_FILE.unlink(missing_ok=True)
 
         model_path = rm.run_dir(run_name) / "model_final.zip"
         model.save(str(model_path))
