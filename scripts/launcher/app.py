@@ -434,6 +434,7 @@ def api_launch():
             "message": f"Unknown reward config {reward_config!r}. Choose one of: {sorted(REWARD_CONFIG_KEYS)}",
         }), 400
     timing_profile = _fresh_timing_profile(speed_factor)
+    debug_mode = bool(data.get("debug_mode", False))
 
     if mode == "stream_only":
         session = _load_session_config()
@@ -468,7 +469,7 @@ def api_launch():
                 "message": "No run selected to resume. Start a fresh run.",
             }), 400
         can_resume, reason = _can_resume_with_car(resume_name, car)
-        if not can_resume:
+        if not can_resume and not debug_mode:
             return jsonify({
                 "ok": False,
                 "message": (
@@ -478,7 +479,7 @@ def api_launch():
             }), 409
         timing_profile = _requested_timing_profile(resume_name, speed_factor)
         can_resume, reason = _can_resume_with_timing(resume_name, timing_profile)
-        if not can_resume:
+        if not can_resume and not debug_mode:
             return jsonify({
                 "ok": False,
                 "message": (

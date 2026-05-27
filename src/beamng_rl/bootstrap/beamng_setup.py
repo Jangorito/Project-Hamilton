@@ -84,7 +84,11 @@ def build_hirochi_etkc_scenario(
     )
 
     scenario.add_vehicle(vehicle, pos=SPAWN_POS, rot_quat=SPAWN_ROT)
+    import json as _json
+    print(f"Vehicle dict: {_json.dumps(vehicle.__dict__, default=str)}")
     scenario.make(bng)
+
+    # scenario.make(bng)
     # scenario.make(bng)
     print(f"Scenario written: {getattr(scenario, 'path', 'unknown')}")
     return scenario, vehicle
