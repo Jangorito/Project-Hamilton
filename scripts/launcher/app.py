@@ -81,7 +81,15 @@ def _get_training_pid() -> int | None:
 
 
 def _is_training() -> bool:
-    return _get_training_pid() is not None
+    if _get_training_pid() is not None:
+        return True
+    # Fallback: scan for a python process running the training script directly.
+    # Catches runs started outside the GUI (e.g. schtasks without a PID file).
+    result = subprocess.run(
+        ["wmic", "process", "where", "name='python.exe'", "get", "commandline", "/format:csv"],
+        capture_output=True, text=True,
+    )
+    return "train_live_ppo_run" in result.stdout
 
 
 def _is_streaming() -> bool:
