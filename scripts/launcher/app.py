@@ -392,7 +392,33 @@ def _obs_action(action: str) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _evict_stale_launchers() -> None:
+    """Kill any other python process already running app.py so a redeployed launcher
+    always claims port 5000 rather than silently losing the race to stale code."""
+    current_pid = os.getpid()
+    result = subprocess.run(
+        ["wmic", "process", "where", "name='python.exe'",
+         "get", "processid,commandline", "/format:csv"],
+        capture_output=True, text=True,
+    )
+    for line in result.stdout.splitlines():
+        if "app.py" not in line:
+            continue
+        parts = line.split(",", 2)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[1].strip())
+        except ValueError:
+            continue
+        if pid == current_pid:
+            continue
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+        print(f"Evicted stale launcher (PID {pid})")
+
+
 if __name__ == "__main__":
+    _evict_stale_launchers()
     print("=" * 50)
     print("  Project Hamilton Launcher")
     print("  http://localhost:5000")
