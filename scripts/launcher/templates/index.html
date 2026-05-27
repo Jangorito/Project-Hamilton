@@ -634,6 +634,18 @@
         </div>
       </div>
 
+      <!-- Physics speed factor -->
+      <div class="panel-section" id="speed-section">
+        <div class="section-label">Physics Speed Factor</div>
+        <div class="slider-row">
+          <input type="range" id="speed-slider" min="0" max="5" step="1" value="0">
+          <div class="slider-readout">
+            <div class="slider-steps" id="speed-val">1x</div>
+            <div class="slider-time" id="speed-sub">real-time</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Stream toggle -->
       <div class="panel-section" id="stream-section">
         <div class="section-label">Streaming</div>
@@ -724,10 +736,13 @@ const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
 function stepsPerSecond() { return measuredStepsPerSecond ?? STEPS_PER_SECOND_FALLBACK; }
 
+const SPEED_FACTORS = [1, 2, 4, 8, 16, 32];
+
 // ── Init ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initRadioGroups();
   initSlider();
+  initSpeedSlider();
   initRunMode();
   loadRuns();
   pollStatus();
@@ -752,7 +767,7 @@ function initRadioGroups() {
 }
 
 function onModeChange(mode) {
-  const trainingOnly = ['run-section', 'steps-section', 'stream-section'];
+  const trainingOnly = ['run-section', 'steps-section', 'speed-section', 'stream-section'];
   trainingOnly.forEach(id => {
     document.getElementById(id).style.display =
       (mode === 'training') ? '' : 'none';
@@ -780,6 +795,27 @@ function updateSliderDisplay() {
   const hours = val / stepsPerSecond() / 3600;
   document.getElementById('steps-val').textContent  = val.toLocaleString();
   document.getElementById('steps-time').textContent = `~${hours.toFixed(1)} hours`;
+}
+
+// ── Speed slider ─────────────────────────────────────────────
+function initSpeedSlider() {
+  document.getElementById('speed-slider').addEventListener('input', updateSpeedDisplay);
+  updateSpeedDisplay();
+}
+
+function updateSpeedDisplay() {
+  const idx = parseInt(document.getElementById('speed-slider').value);
+  const sf = SPEED_FACTORS[idx];
+  document.getElementById('speed-val').textContent = sf + 'x';
+  document.getElementById('speed-sub').textContent = sf === 1 ? 'real-time' : sf + '× faster than real-time';
+}
+
+function setSpeedSliderFromValue(sf) {
+  const idx = SPEED_FACTORS.indexOf(sf);
+  if (idx !== -1) {
+    document.getElementById('speed-slider').value = idx;
+    updateSpeedDisplay();
+  }
 }
 
 // ── Load runs ─────────────────────────────────────────────────
@@ -854,6 +890,9 @@ async function pollStatus() {
       stopBtn.disabled = false;
     }
 
+    // Speed factor — restore slider from last saved session
+    if (!isTraining && d.speed_factor != null) setSpeedSliderFromValue(d.speed_factor);
+
     // Damage meta
     if (d.max_damage != null) {
       document.getElementById('damage-input').value = d.max_damage;
@@ -903,9 +942,10 @@ async function launch() {
   const runName = fresh
     ? document.getElementById('fresh-name').value.trim()
     : document.getElementById('resume-select').value;
-  const timesteps = parseInt(document.getElementById('steps-slider').value);
-  const stream    = document.getElementById('stream-toggle').checked;
-  const maxDamage = parseFloat(document.getElementById('damage-input').value) || 500;
+  const timesteps    = parseInt(document.getElementById('steps-slider').value);
+  const stream       = document.getElementById('stream-toggle').checked;
+  const maxDamage    = parseFloat(document.getElementById('damage-input').value) || 500;
+  const speedFactor  = SPEED_FACTORS[parseInt(document.getElementById('speed-slider').value)];
 
   const btn = document.getElementById('launch-btn');
   btn.disabled = true;
@@ -915,7 +955,7 @@ async function launch() {
     const r = await fetch('/api/launch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage }),
+      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor }),
     });
     const d = await r.json();
     toast(d.message, d.ok ? 'success' : 'error');

@@ -142,6 +142,7 @@ class BeamNGRacingEnv(gym.Env):
         max_damage: float = 500.0,
         wall_bash_steps_limit: int = 30,
         vehicle_model: str = "etkc",
+        speed_factor: int | None = None,
     ) -> None:
         super().__init__()
 
@@ -217,6 +218,7 @@ class BeamNGRacingEnv(gym.Env):
         self.max_damage = float(max_damage)
         self.wall_bash_steps_limit = int(wall_bash_steps_limit)
         self.vehicle_model = str(vehicle_model)
+        self.speed_factor = int(speed_factor) if speed_factor is not None else None
 
         # Runtime counters are reset in reset(), but initial values keep the
         # object inspectable immediately after construction.
@@ -902,7 +904,7 @@ class BeamNGRacingEnv(gym.Env):
             # Deterministic stepping plus pause mirrors beamng_bootstrap.py and
             # makes beamng.step(...) the clock source for RL actions.
             try:
-                beamng.settings.set_deterministic(60)
+                beamng.settings.set_deterministic(60, speed_factor=self.speed_factor)
                 beamng.pause()
             except Exception:
                 pass

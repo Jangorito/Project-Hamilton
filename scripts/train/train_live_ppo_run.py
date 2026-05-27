@@ -239,10 +239,13 @@ def main() -> None:
     max_damage      = float(session.get("max_damage", ENV_CONFIG["max_damage"]))
     fresh           = args.fresh or bool(session.get("fresh", False))
     run_name_hint   = args.run_name or session.get("run_name", "") or None
+    _sf             = session.get("speed_factor")
+    speed_factor    = int(_sf) if _sf is not None else None
 
     if session:
+        sf_label = f"{speed_factor}x" if speed_factor is not None else "default"
         print(f"Launcher config: car={vehicle_model}, steps={total_timesteps}, "
-              f"max_damage={max_damage}, fresh={fresh}")
+              f"max_damage={max_damage}, fresh={fresh}, speed_factor={sf_label}")
 
     if not CENTRELINE_PATH.is_file():
         raise FileNotFoundError(f"Centreline JSON not found: {CENTRELINE_PATH}")
@@ -293,6 +296,7 @@ def main() -> None:
             live_spawn_mode="bootstrap",
             vehicle_id="ego_vehicle",
             vehicle_model=vehicle_model,
+            speed_factor=speed_factor,
             **env_config,
         )
 
