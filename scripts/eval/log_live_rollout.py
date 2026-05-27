@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
 from collections.abc import Mapping
@@ -16,6 +17,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv
+from beamng_rl.training.run_manager import RunManager
 
 
 STEPS_PER_ACTION = 30
@@ -170,6 +172,28 @@ def _print_live_failure_hints() -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Run a live heuristic rollout in BeamNG.")
+    parser.add_argument("--run", metavar="NAME",
+                        help="Run name to read vehicle_model from run_config.json.")
+    parser.add_argument("--vehicle", metavar="MODEL",
+                        help="Vehicle model override (sbr or etkc). Takes precedence over --run.")
+    args = parser.parse_args()
+
+    rm = RunManager()
+    if args.vehicle:
+        vehicle_model = args.vehicle.strip().lower()
+    elif args.run:
+        cfg = rm.load_config(args.run)
+        vehicle_model = cfg.get("env", {}).get("vehicle_model", "").strip().lower()
+        if vehicle_model not in ("sbr", "etkc"):
+            print(
+                f"Warning: vehicle_model not found in run_config.json for run '{args.run}'"
+                " — defaulting to 'etkc'."
+            )
+            vehicle_model = "etkc"
+    else:
+        vehicle_model = "etkc"
+
     centreline_path = (
         REPO_ROOT / "data" / "hirochi_track" / "centreline_resampled_2_0m.json"
     )
@@ -186,6 +210,7 @@ def main() -> None:
                 launch_beamng=True,
                 live_spawn_mode="bootstrap",
                 vehicle_id="ego_vehicle",
+                vehicle_model=vehicle_model,
                 steps_per_action=STEPS_PER_ACTION,
             )
             _, reset_info = env.reset()
