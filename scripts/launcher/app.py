@@ -45,6 +45,8 @@ CAR_LABELS = {
     "sbr": "SBR4 Track",
     "etkc": "ETK K-Series Trackday A",
 }
+SPEED_FACTORS = {1, 2, 4, 8, 16, 32}
+REWARD_CONFIG_KEYS = {"v1", "v2"}
 
 PYTHON_EXE = REPO_ROOT / "venv" / "Scripts" / "python.exe"
 if not PYTHON_EXE.exists():
@@ -308,9 +310,19 @@ def api_launch():
     stream = bool(data.get("stream", mode == "training"))
     max_damage = float(data.get("max_damage", 500.0))
     speed_factor = int(data.get("speed_factor", 1))
+    if speed_factor not in SPEED_FACTORS:
+        return jsonify({
+            "ok": False,
+            "message": f"Unknown speed factor {speed_factor!r}. Choose one of: {sorted(SPEED_FACTORS)}",
+        }), 400
     # Reward config key ("v1" or "v2"). Written into launcher_session.json so
     # train_live_ppo_run.py picks it up without needing a CLI flag from schtasks.
     reward_config = str(data.get("reward_config", "v1"))
+    if reward_config not in REWARD_CONFIG_KEYS:
+        return jsonify({
+            "ok": False,
+            "message": f"Unknown reward config {reward_config!r}. Choose one of: {sorted(REWARD_CONFIG_KEYS)}",
+        }), 400
 
     session = _load_session_config()
     session.update({
@@ -352,7 +364,10 @@ def api_launch():
     obs_warning = "" if obs_ok else f" OBS warning: {obs_message}"
     return jsonify({
         "ok": True,
-        "message": f"Training started: {CAR_LABELS[car]}, {timesteps:,} steps{stream_label}.{obs_warning}",
+        "message": (
+            f"Training started: {CAR_LABELS[car]}, {timesteps:,} steps, "
+            f"{speed_factor}x speed, reward {reward_config}{stream_label}.{obs_warning}"
+        ),
     })
 
 
