@@ -13,7 +13,7 @@ try:
 except ImportError:
     sys.exit("obsws-python not installed. Run: pip install obsws-python")
 
-BEAMNG_PROCESS = "BeamNG.x64"
+BEAMNG_PROCESS = "BeamNG.tech.x64"
 WATCH_POLL_INTERVAL = 5   # seconds between process checks
 WATCH_START_TIMEOUT = 120  # seconds to wait for BeamNG to appear before giving up
 

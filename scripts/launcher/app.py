@@ -40,8 +40,15 @@ SESSION_CONFIG_PATH = REPO_ROOT / "config" / "launcher_session.json"
 
 OBS_PORT = int(os.environ.get("OBS_PORT", 4455))
 OBS_PASSWORD = os.environ.get("OBS_WEBSOCKET_PASSWORD", "")
+BEAMNG_PROCESS_NAMES = ("BeamNG.tech.x64.exe", "BeamNG.x64.exe")
+CAR_LABELS = {
+    "sbr": "SBR4 Track",
+    "etkc": "ETK K-Series Trackday A",
+}
 
 PYTHON_EXE = REPO_ROOT / "venv" / "Scripts" / "python.exe"
+if not PYTHON_EXE.exists():
+    PYTHON_EXE = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 if not PYTHON_EXE.exists():
     PYTHON_EXE = Path("python")
 
@@ -65,18 +72,22 @@ rm = RunManager()
 # ---------------------------------------------------------------------------
 
 def _is_beamng_running() -> bool:
-    result = subprocess.run(
-        ["tasklist", "/FI", "IMAGENAME eq BeamNG.tech.x64.exe", "/NH"],
-        capture_output=True, text=True,
-    )
-    return "beamng.tech.x64.exe" in result.stdout.lower()
+    for process_name in BEAMNG_PROCESS_NAMES:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {process_name}", "/NH"],
+            capture_output=True, text=True,
+        )
+        if process_name.lower() in result.stdout.lower():
+            return True
+    return False
 
 
 def _kill_beamng() -> None:
-    subprocess.run(
-        ["taskkill", "/F", "/IM", "BeamNG.tech.x64.exe", "/T"],
-        capture_output=True,
-    )
+    for process_name in BEAMNG_PROCESS_NAMES:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", process_name, "/T"],
+            capture_output=True,
+        )
 
 
 def _get_training_pid() -> int | None:
@@ -108,7 +119,7 @@ def _is_training() -> bool:
 def _is_streaming() -> bool:
     try:
         import obsws_python as obs # type: ignore
-        cl = obs.ReqClient(host="localhost", port=OBS_PORT, password=OBS_PASSWORD, timeout=2)
+        cl = obs.ReqClient(host="localhost", port=OBS_PORT, password=_get_obs_password(), timeout=2)
         return bool(cl.get_stream_status().output_active)
     except Exception:
         return False
@@ -139,8 +150,13 @@ def _read_live_steps() -> int | None:
 
 def _get_active_run_info() -> dict:
     run_name = rm.find_latest_run()
+    session = _load_session_config()
     if not run_name:
-        return {"run_name": None, "current_steps": 0, "total_steps": 100_000}
+        return {
+            "run_name": None,
+            "current_steps": 0,
+            "total_steps": int(session.get("total_timesteps", 100_000)),
+        }
     # Prefer the live progress file (updated every rollout by StepProgressWriter).
     # Fall back to the latest checkpoint name when no live file exists.
     current_steps = _read_live_steps()
@@ -152,13 +168,17 @@ def _get_active_run_info() -> dict:
             if match:
                 current_steps = int(match.group(1))
     config = rm.load_config(run_name)
-    total_steps = config.get("training", {}).get("total_timesteps", 100_000)
+    total_steps = int(session.get(
+        "total_timesteps",
+        config.get("training", {}).get("total_timesteps", 100_000),
+    ))
     return {"run_name": run_name, "current_steps": current_steps, "total_steps": total_steps}
 
 
-def _eta_seconds(current_steps: int, total_steps: int) -> int:
+def _eta_seconds(current_steps: int, total_steps: int, speed_factor: int = 1) -> int:
     remaining = max(0, total_steps - current_steps)
-    rate = _pace["rate"] if _pace["rate"] is not None else _STEPS_PER_SECOND_FALLBACK
+    fallback_rate = _STEPS_PER_SECOND_FALLBACK * max(1, int(speed_factor))
+    rate = _pace["rate"] if _pace["rate"] is not None else fallback_rate
     return int(remaining / rate)
 
 
@@ -174,6 +194,20 @@ def _load_session_config() -> dict:
 def _save_session_config(config: dict) -> None:
     SESSION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     SESSION_CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
+def _get_obs_password() -> str:
+    if OBS_PASSWORD:
+        return OBS_PASSWORD
+    if os.name != "nt":
+        return ""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _ = winreg.QueryValueEx(key, "OBS_WEBSOCKET_PASSWORD")
+            return str(value)
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +227,14 @@ def index():
 def api_status():
     training = _is_training()
     run_info = _get_active_run_info()
-    eta = _eta_seconds(run_info["current_steps"], run_info["total_steps"]) if training else None
     session = _load_session_config()
+    car = str(session.get("car", "sbr")).strip().lower()
+    speed_factor = int(session.get("speed_factor", 1) or 1)
+    eta = _eta_seconds(
+        run_info["current_steps"],
+        run_info["total_steps"],
+        speed_factor,
+    ) if training else None
     return jsonify({
         "is_training": training,
         "is_streaming": _is_streaming(),
@@ -206,8 +246,10 @@ def api_status():
         "steps_per_second": _pace["rate"],
         "max_damage": session.get("max_damage"),
         "prev_max_damage": session.get("prev_max_damage"),
-        "speed_factor": session.get("speed_factor", 1),
+        "speed_factor": speed_factor,
         "reward_config": session.get("reward_config", "v1"),
+        "car": car,
+        "car_label": CAR_LABELS.get(car, car),
     })
 
 
@@ -253,12 +295,17 @@ def _resolve_log_path() -> Path | None:
 @app.route("/api/launch", methods=["POST"])
 def api_launch():
     data = request.get_json(force=True)
-    car = data.get("car", "sbr")
     mode = data.get("mode", "training")
+    car = str(data.get("car", "sbr")).strip().lower()
+    if car not in CAR_LABELS:
+        return jsonify({
+            "ok": False,
+            "message": f"Unknown car {car!r}. Choose one of: {', '.join(CAR_LABELS)}",
+        }), 400
     run_name = str(data.get("run_name", "")).strip()
     fresh = bool(data.get("fresh", False))
     timesteps = int(data.get("timesteps", 100_000))
-    stream = bool(data.get("stream", False))
+    stream = bool(data.get("stream", mode == "training"))
     max_damage = float(data.get("max_damage", 500.0))
     speed_factor = int(data.get("speed_factor", 1))
     # Reward config key ("v1" or "v2"). Written into launcher_session.json so
@@ -268,6 +315,7 @@ def api_launch():
     session = _load_session_config()
     session.update({
         "car": car,
+        "car_label": CAR_LABELS[car],
         "run_name": run_name,
         "fresh": fresh,
         "total_timesteps": timesteps,
@@ -279,8 +327,9 @@ def api_launch():
     _save_session_config(session)
 
     if mode == "stream_only":
-        _obs_action("start")
-        return jsonify({"ok": True, "message": "Stream started."})
+        obs_ok, obs_message = _obs_action("start")
+        status = 200 if obs_ok else 500
+        return jsonify({"ok": obs_ok, "message": obs_message or "Stream started."}), status
 
     _kill_beamng()
 
@@ -288,13 +337,23 @@ def api_launch():
         subprocess.run(["schtasks", "/run", "/tn", "BeamNGDirect"], capture_output=True)
         return jsonify({"ok": True, "message": "BeamNG launched standalone."})
 
+    obs_ok = True
+    obs_message = ""
+    if stream:
+        obs_ok, obs_message = _obs_action("start")
+
     result = subprocess.run(
         ["schtasks", "/run", "/tn", "HamiltonTraining"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         return jsonify({"ok": False, "message": f"schtasks failed: {result.stderr.strip()}"}), 500
-    return jsonify({"ok": True, "message": "Training started via scheduled task."})
+    stream_label = " with OBS stream" if stream else ""
+    obs_warning = "" if obs_ok else f" OBS warning: {obs_message}"
+    return jsonify({
+        "ok": True,
+        "message": f"Training started: {CAR_LABELS[car]}, {timesteps:,} steps{stream_label}.{obs_warning}",
+    })
 
 
 @app.route("/api/stop/training", methods=["POST"])
@@ -312,14 +371,14 @@ def api_stop_training():
 
 @app.route("/api/stop/stream", methods=["POST"])
 def api_stop_stream():
-    _obs_action("stop")
-    return jsonify({"ok": True, "message": "Stream stopped."})
+    obs_ok, obs_message = _obs_action("stop")
+    return jsonify({"ok": obs_ok, "message": obs_message or "Stream stopped."})
 
 
 @app.route("/api/start/stream", methods=["POST"])
 def api_start_stream():
-    _obs_action("start")
-    return jsonify({"ok": True, "message": "Stream started."})
+    obs_ok, obs_message = _obs_action("start")
+    return jsonify({"ok": obs_ok, "message": obs_message or "Stream started."})
 
 
 @app.route("/api/wake", methods=["POST"])
@@ -373,19 +432,28 @@ def api_damage_restore():
     })
 
 
-def _obs_action(action: str) -> None:
+def _obs_action(action: str) -> tuple[bool, str]:
+    obs_password = _get_obs_password()
     args = [
         str(PYTHON_EXE),
         str(REPO_ROOT / "scripts" / "env" / "obs_control.py"),
         "--port", str(OBS_PORT),
         action,
     ]
-    if OBS_PASSWORD:
-        args += ["--password", OBS_PASSWORD]
+    if obs_password:
+        args += ["--password", obs_password]
     try:
-        subprocess.run(args, capture_output=True, timeout=10, cwd=str(REPO_ROOT))
-    except Exception:
-        pass
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(REPO_ROOT),
+        )
+    except Exception as exc:
+        return False, str(exc)
+    message = (result.stdout or result.stderr).strip()
+    return result.returncode == 0, message
 
 
 # ---------------------------------------------------------------------------

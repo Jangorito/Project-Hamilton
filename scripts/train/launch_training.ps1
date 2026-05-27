@@ -27,13 +27,14 @@ param(
     [switch]$Tail,
     [switch]$Stream,
     [int]   $OBSPort        = 4455,
-    [string]$BeamNGProcess  = "BeamNG.x64"
+    [string]$BeamNGProcess  = "BeamNG.tech.x64"
 )
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $LogDir   = Join-Path $RepoRoot "logs\remote"
 $PidFile  = Join-Path $LogDir "training.pid"
 $LogLink  = Join-Path $LogDir "latest.log"
+$SessionConfigFile = Join-Path $RepoRoot "config\launcher_session.json"
 
 function Get-LatestLog {
     if (Test-Path $LogLink) {
@@ -97,6 +98,15 @@ if (-not (Test-Path $PythonExe)) { $PythonExe = "python" }
 $TrainArgs = "scripts\train\train_live_ppo_run.py"
 if ($Fresh)   { $TrainArgs += " --fresh" }
 if ($RunName) { $TrainArgs += " --run-name $RunName" }
+
+if (Test-Path $SessionConfigFile) {
+    try {
+        $SessionConfig = Get-Content $SessionConfigFile -Raw | ConvertFrom-Json
+        if ($SessionConfig.stream -eq $true) { $Stream = $true }
+    } catch {
+        Write-Host "Warning: could not read launcher session config - continuing with CLI flags."
+    }
+}
 
 # ── Prepare log file ──────────────────────────────────────────────────────────
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }

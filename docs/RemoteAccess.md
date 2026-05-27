@@ -115,6 +115,21 @@ If the WebSocket has a password set, store it as a persistent environment variab
 ```powershell
 [System.Environment]::SetEnvironmentVariable("OBS_WEBSOCKET_PASSWORD", "your-password", "User")
 ```
+Or:
+
+PS$p = Join-Path $env:APPDATA 'obs-studio\plugin_config\obs-websocket\config.json'; $c = Get-Content $p -Raw | ConvertFrom-Json; $c | Select-Object server_enabled,server_port,auth_required,server_password
+
+server_enabled server_port auth_required server_pas   
+                                         sword        
+-------------- ----------- ------------- ----------   
+          True        4455          True WrCEAQd...   
+
+
+PS C:\Users\Jango\workspace\BeamNG> $p = Join-Path $env:APPDATA 'obs-studio\plugin_config\obs-websocket\config.json'; $c = Get-Content $p -Raw | ConvertFrom-Json; [System.Environment]::SetEnvironmentVariable('OBS_WEBSOCKET_PASSWORD', $c.server_password, 'User'); $env:OBS_WEBSOCKET_PASSWORD = $c.server_password
+
+then run commands like this:
+
+PS C:\Users\Jango\workspace\BeamNG> .\venv\Scripts\python.exe .\scripts\env\obs_control.py start --password
 
 If no password is set in OBS, skip this step.
 

@@ -206,17 +206,25 @@ def _run_deterministic_rollout(
     return final_progress - start_progress, final_reason, jump_count
 
 
-def _build_run_config(reward_config: RewardConfig, reward_key: str) -> dict[str, Any]:
+def _build_run_config(
+    reward_config: RewardConfig,
+    reward_key: str,
+    *,
+    total_timesteps: int,
+    env_config: dict[str, Any],
+    vehicle_model: str,
+    speed_factor: int | None,
+) -> dict[str, Any]:
     # Include config_key so run_config.json and run_info.md are self-documenting:
     # any reader can immediately see which experiment arm produced these results.
     return {
         "training": dict(
-            total_timesteps  = TOTAL_TIMESTEPS,
+            total_timesteps  = total_timesteps,
             checkpoint_every = CHECKPOINT_EVERY,
             rollout_steps    = ROLLOUT_STEPS,
         ),
         "ppo":     PPO_CONFIG,
-        "env":     ENV_CONFIG,
+        "env":     {**env_config, "vehicle_model": vehicle_model, "speed_factor": speed_factor},
         "reward":  {"config_key": reward_key, **vars(reward_config)},
     }
 
@@ -243,7 +251,9 @@ def main() -> None:
     # CLI args take precedence over launcher session config.
     session = _load_session_config()
     total_timesteps = int(session.get("total_timesteps", TOTAL_TIMESTEPS))
-    vehicle_model   = str(session.get("car", "etkc"))
+    vehicle_model   = str(session.get("car", "etkc")).strip().lower()
+    if vehicle_model not in ("sbr", "etkc"):
+        sys.exit("Error: unknown car in launcher_session.json. Valid values: sbr, etkc")
     max_damage      = float(session.get("max_damage", ENV_CONFIG["max_damage"]))
     fresh           = args.fresh or bool(session.get("fresh", False))
     _sf             = session.get("speed_factor")
@@ -288,7 +298,17 @@ def main() -> None:
                 "Choose a different name or omit --fresh to resume it."
             )
         resume_path = None
-        rm.create_run(run_name, _build_run_config(reward_config, reward_key))
+        rm.create_run(
+            run_name,
+            _build_run_config(
+                reward_config,
+                reward_key,
+                total_timesteps=total_timesteps,
+                env_config=env_config,
+                vehicle_model=vehicle_model,
+                speed_factor=speed_factor,
+            ),
+        )
         print(f"Created run: {run_name}")
     else:
         run_name = run_name_hint or rm.find_latest_run()
