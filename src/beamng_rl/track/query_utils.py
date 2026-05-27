@@ -213,40 +213,68 @@ class TrackCentreline:
             - signed lateral error (+left, -right)
             - progress around the lap (metres & ratio)
             - track heading at the nearest point
+
+        Segment disambiguation uses 3D distance (XYZ) so that track sections
+        which overlap in XY but differ in elevation — e.g. an overpass — are
+        correctly resolved. All downstream geometry (arc-length progress,
+        heading, lateral error) remains in the XY plane, which is the natural
+        space for map-based racing metrics.
         """
 
-        vehicle_xy = self._coerce_position_xy(position_xyz)
+        position = np.asarray(position_xyz, dtype=float).reshape(-1)
+        if position.shape[0] not in (2, 3):
+            raise ValueError(
+                "position_xyz must contain either (x, y) or (x, y, z); "
+                f"got {position.shape[0]} value(s)"
+            )
+        if not np.all(np.isfinite(position)):
+            raise ValueError(f"position_xyz must contain finite numbers, got {position_xyz!r}")
+
+        vehicle_xy = position[:2].copy()
+        # Z is used only for segment disambiguation; default to 0 if absent.
+        vehicle_z = float(position[2]) if position.shape[0] >= 3 else 0.0
 
         # Vector from each segment start to the vehicle
         segment_start_to_vehicle = vehicle_xy[None, :] - self.segment_start_points_xy
 
-        # Project segment_start_to_vehicle onto each segment vector. Dividing by 
+        # Project segment_start_to_vehicle onto each segment vector. Dividing by
         # the squared length converts the dot product into the segment parameter t.
         # t=0 means nearest at the start point, t=1 at the end point, and
         # values between them are interpolated points along the segment.
-
-        """
-        calculate the projection of the vehicle position onto each segment vector
-        using the dot product. The result is a progression parameter indicates how far 
-        along the segment the projection falls. 
-        We then clip this parameter to the range [0, 1] to ensure that the projection 
-        stays within the segment bounds.
-        """
+        #
+        # The projection is computed in XY so that arc-length progress (which is
+        # also measured in XY) stays consistent with the nearest-point position.
         segment_length_sq = self.segment_lengths * self.segment_lengths
-        raw_segment_progression_projection = np.einsum("ij,ij->i", 
+        raw_segment_progression_projection = np.einsum("ij,ij->i",
             segment_start_to_vehicle, self.segment_vectors_xy) / segment_length_sq
         segment_progression_projection = np.clip(raw_segment_progression_projection, 0.0, 1.0)
 
-        # calculating a candidate nearest point for each segment
+        # Candidate nearest point in XY for each segment
         nearest_points_xy = (
             self.segment_start_points_xy + segment_progression_projection[:, None] * self.segment_vectors_xy
         )
-        # calculates vector offset between each candidate nearest point and the vehicle
+        # XY offset from each candidate to the vehicle
         vehicle_offsets_xy = vehicle_xy[None, :] - nearest_points_xy
-        # squared distance of vector offsets
-        distance_sq = np.einsum("ij,ij->i", vehicle_offsets_xy, vehicle_offsets_xy)
-        # store appropriate segment (the one with the smallest distance)
-        best_segment_index = int(np.argmin(distance_sq))
+        # XY squared distance — used for lateral error and distance_to_centreline
+        distance_sq_xy = np.einsum("ij,ij->i", vehicle_offsets_xy, vehicle_offsets_xy)
+
+        # --- 3D disambiguation ---
+        # On tracks with elevation changes (e.g. an overpass), two segments can
+        # be nearly coincident in XY but separated by several metres in Z.
+        # Pure XY nearest-point search picks the wrong segment in that region,
+        # corrupting progress, lookahead observations, and heading error.
+        # Adding the Z component to the disambiguation distance resolves this:
+        # the segment at the correct elevation wins because its dZ ≈ 0, while
+        # the overhead segment has a large dZ penalty.
+        nearest_z = (
+            self.segment_start_points_xyz[:, 2]
+            + segment_progression_projection * self.segment_vectors_xyz[:, 2]
+        )
+        dz = vehicle_z - nearest_z
+        distance_sq_3d = distance_sq_xy + dz * dz
+
+        # Best segment: minimum 3D distance
+        best_segment_index = int(np.argmin(distance_sq_3d))
         # get progression value for best segment
         segment_progression = float(segment_progression_projection[best_segment_index])
         # xy value of point
@@ -257,8 +285,9 @@ class TrackCentreline:
             + segment_progression * self.segment_vectors_xyz[best_segment_index]
         )
 
-        # squared distance -> real distance
-        distance_to_centerline = float(math.sqrt(float(distance_sq[best_segment_index])))
+        # Lateral distance is XY-only — this is what matters for off-track
+        # detection and the lateral error penalty (horizontal road width).
+        distance_to_centerline = float(math.sqrt(float(distance_sq_xy[best_segment_index])))
 
 
         # track direction at target segment
