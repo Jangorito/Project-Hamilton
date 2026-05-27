@@ -199,6 +199,7 @@ def api_status():
         "steps_per_second": _pace["rate"],
         "max_damage": session.get("max_damage"),
         "prev_max_damage": session.get("prev_max_damage"),
+        "speed_factor": session.get("speed_factor", 1),
     })
 
 
@@ -251,6 +252,7 @@ def api_launch():
     timesteps = int(data.get("timesteps", 100_000))
     stream = bool(data.get("stream", False))
     max_damage = float(data.get("max_damage", 500.0))
+    speed_factor = int(data.get("speed_factor", 1))
 
     session = _load_session_config()
     session.update({
@@ -260,6 +262,7 @@ def api_launch():
         "total_timesteps": timesteps,
         "stream": stream,
         "max_damage": max_damage,
+        "speed_factor": speed_factor,
     })
     _save_session_config(session)
 
