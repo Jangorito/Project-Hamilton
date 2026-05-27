@@ -286,7 +286,13 @@ class BeamNGRacingEnv(gym.Env):
         self.nogfx = bool(nogfx)
         self.max_damage = float(max_damage)
         self.wall_bash_steps_limit = int(wall_bash_steps_limit)
-        self.vehicle_model = str(vehicle_model)
+        vehicle_model_value = str(vehicle_model).strip().lower()
+        if vehicle_model_value not in ("sbr", "etkc"):
+            raise ValueError(
+                "vehicle_model must be one of 'sbr' or 'etkc', "
+                f"got {vehicle_model!r}"
+            )
+        self.vehicle_model = vehicle_model_value
         self.speed_factor = int(speed_factor) if speed_factor is not None else None
 
         # Runtime counters are reset in reset(), but initial values keep the
@@ -982,11 +988,11 @@ class BeamNGRacingEnv(gym.Env):
             # manual debugging and training start from the same level, vehicle,
             # and part config. scenario_name is kept as a public constructor
             # parameter, but the shared setup is currently Hirochi.
-            _scenario_builder = (
-                build_hirochi_sbr_scenario
-                if self.vehicle_model == "sbr"
-                else build_hirochi_etkc_scenario
-            )
+            scenario_builders = {
+                "sbr": build_hirochi_sbr_scenario,
+                "etkc": build_hirochi_etkc_scenario,
+            }
+            _scenario_builder = scenario_builders[self.vehicle_model]
             scenario, vehicle = _scenario_builder(
                 beamng,
                 vehicle_id=self.vehicle_id,
