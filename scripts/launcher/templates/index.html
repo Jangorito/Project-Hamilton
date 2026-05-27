@@ -378,23 +378,6 @@
 
   .btn-group { display: flex; flex-direction: column; gap: 8px; }
 
-  /* ── Twitch embed ──────────────────────────────────────────── */
-  .twitch-wrap {
-    position: relative;
-    background: #000;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    aspect-ratio: 16/9;
-    margin-bottom: 12px;
-  }
-
-  .twitch-embed {
-    width: 100%;
-    height: 100%;
-    display: block;
-    border: none;
-  }
 
   /* ── Progress bar ─────────────────────────────────────────── */
   .progress-wrap {
@@ -674,19 +657,6 @@
     <!-- ── Right panel: Monitor ───────────────────────────────── -->
     <div class="panel panel-right">
 
-      <!-- Twitch stream -->
-      <div class="panel-section">
-        <div class="section-label" style="margin-bottom:8px">Live Stream</div>
-        <div class="twitch-wrap">
-          <iframe
-            src="https://player.twitch.tv/?channel=jangorito&parent=localhost&muted=false"
-            class="twitch-embed"
-            allowfullscreen="true"
-            scrolling="no">
-          </iframe>
-        </div>
-      </div>
-
       <!-- Progress -->
       <div class="panel-section progress-wrap">
         <div class="progress-meta">
@@ -733,6 +703,7 @@
       <div class="panel-section">
         <div class="section-label">Quick Actions</div>
         <div class="actions-row">
+          <a class="btn btn-sm" href="https://www.twitch.tv/jangorito" target="_blank" rel="noopener">Watch on Twitch</a>
           <button class="btn btn-sm" onclick="startStream()">Start Stream</button>
           <button class="btn btn-sm" onclick="wakeScreen()">Wake Screen</button>
         </div>
