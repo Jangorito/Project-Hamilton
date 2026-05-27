@@ -649,7 +649,7 @@
       <!-- Launch buttons -->
       <div class="btn-group">
         <button class="btn btn-primary" id="launch-btn" onclick="launch()">Launch</button>
-        <button class="btn btn-danger"    onclick="stopTraining()">Stop Training</button>
+        <button class="btn btn-danger" id="stop-btn" onclick="stopTraining()">Stop Training</button>
         <button class="btn btn-secondary" onclick="stopStream()">Stop Stream</button>
       </div>
     </div>
@@ -848,6 +848,11 @@ async function pollStatus() {
 
     isTraining = d.is_training;
     document.getElementById('launch-btn').disabled = isTraining;
+    if (!isTraining) {
+      const stopBtn = document.getElementById('stop-btn');
+      stopBtn.textContent = 'Stop Training';
+      stopBtn.disabled = false;
+    }
 
     // Damage meta
     if (d.max_damage != null) {
@@ -927,6 +932,11 @@ async function launch() {
 async function stopTraining() {
   const r = await fetch('/api/stop/training', { method: 'POST' });
   const d = await r.json();
+  if (d.ok) {
+    const btn = document.getElementById('stop-btn');
+    btn.textContent = 'Finishing rollout…';
+    btn.disabled = true;
+  }
   toast(d.message, d.ok ? 'info' : 'error');
   setTimeout(pollStatus, 1500);
 }
