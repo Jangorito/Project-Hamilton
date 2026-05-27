@@ -685,6 +685,16 @@
         </label>
       </div>
 
+      <!-- Debug mode -->
+      <div class="panel-section" id="debug-section">
+        <div class="section-label" style="color:var(--yellow)">Debug</div>
+        <label class="toggle-row">
+          <input type="checkbox" id="debug-mode-toggle">
+          <div class="toggle-switch"></div>
+          <span style="color:var(--yellow)">Bypass vehicle guard</span>
+        </label>
+      </div>
+
       <div class="divider"></div>
 
       <!-- Launch buttons -->
@@ -947,6 +957,10 @@ function updateFreshNameSuggestion() {
   }
 }
 
+function debugMode() {
+  return document.getElementById('debug-mode-toggle').checked;
+}
+
 function validateResumeCarChoice() {
   if (isTraining || selectedRunMode() !== 'resume') return;
   const select = document.getElementById('resume-select');
@@ -962,6 +976,15 @@ function validateResumeCarChoice() {
   const canResumeCar = details.car === car || (!details.car && car === 'sbr');
   const canResumeTiming = runTiming === requestedTiming;
   if (!canResumeCar || !canResumeTiming) {
+    if (debugMode()) {
+      const reason = !canResumeCar
+        ? (details.car_label && details.car
+          ? `${runName} is ${details.car_label}`
+          : `${runName} has no saved vehicle metadata`)
+        : `${runName} was created for ${runTiming} timing`;
+      toast(`Debug: bypassing guard — ${reason}.`, 'info');
+      return;
+    }
     setRunMode('fresh');
     updateFreshNameSuggestion();
     const reason = !canResumeCar
@@ -1118,6 +1141,7 @@ async function launch() {
   const maxDamage    = parseFloat(document.getElementById('damage-input').value) || 500;
   const speedFactor  = SPEED_FACTORS[parseInt(document.getElementById('speed-slider').value)];
   const rewardConfig = document.querySelector('input[name="reward"]:checked').value;
+  const debug        = debugMode();
 
   const btn = document.getElementById('launch-btn');
   btn.disabled = true;
@@ -1127,7 +1151,7 @@ async function launch() {
     const r = await fetch('/api/launch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig }),
+      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig, debug_mode: debug }),
     });
     const d = await r.json();
     toast(d.message, d.ok ? 'success' : 'error');
