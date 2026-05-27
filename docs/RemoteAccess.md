@@ -50,9 +50,26 @@ Open `http://100.120.21.69:5000` in your browser.
 **SSH tunnel (if direct access is blocked):**
 ```powershell
 # Run in a Student machine terminal — keep this session open
-ssh -L 5000:localhost:5000 jango@100.120.21.69
+ssh -L 5000:127.0.0.1:5000 jango@100.120.21.69
 ```
 Then open `http://localhost:5000`.
+
+### Reload Flask after app changes
+
+Use this after changing `scripts/launcher/app.py`, `scripts/launcher/templates/index.html`, or launcher-related code that Flask imports.
+
+1. Stop any old local SSH tunnel with `Ctrl+C`, or close that terminal.
+2. Stop/replace the current Flask server by running the VS Code task:
+   `Terminal` -> `Run Task` -> `Jango: pull + restart Flask`
+3. Keep the task terminal open. It SSHes to Jango, pulls the repo, kills whatever is on port `5000`, then starts Flask.
+4. Open a new local PowerShell terminal. In this workspace it should default into the venv.
+5. Start a fresh SSH tunnel:
+
+```powershell
+ssh -L 5000:127.0.0.1:5000 jango@100.120.21.69
+```
+
+6. Open `http://localhost:5000`.
 
 ---
 
