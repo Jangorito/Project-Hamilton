@@ -104,6 +104,22 @@ class RewardComponentLogger(BaseCallback):
         self._n = 0
 
 
+class StopSignalCallback(BaseCallback):
+    """Gracefully stops training when the launcher writes a stop signal file.
+
+    Returning False from _on_step tells SB3 to stop after the current step,
+    letting model.learn() return normally so the training script can save the
+    model and run the deterministic rollout before exiting.
+    """
+
+    def __init__(self, signal_file: Path | str, verbose: int = 0) -> None:
+        super().__init__(verbose)
+        self._signal_file = Path(signal_file)
+
+    def _on_step(self) -> bool:
+        return not self._signal_file.exists()
+
+
 class StepProgressWriter(BaseCallback):
     """Writes num_timesteps to a file after each rollout so the launcher UI shows real progress.
 
