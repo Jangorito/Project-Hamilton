@@ -24,7 +24,13 @@
       "Bash(./venv/Scripts/pip.exe install *)",
       "PowerShell(Get-Process | Where-Object { $_.Name -match \"beam|beamng\" -or $_.MainWindowTitle -match \"beam\" } | Select-Object Id, Name, MainWindowTitle, MainWindowHandle)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\Jango\\\\workspace\\\\BeamNG\" -Recurse -Exclude venv,__pycache__,.git,node_modules -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer -or $_.Extension -in '.py','.json','.yaml','.yml','.toml','.cfg','.csv','.txt','.log' } | Select-Object -First 200 | ForEach-Object { $_.FullName })",
+      "Bash(python -c \"import json; data = json.load\\(open\\('data/hirochi_track/centreline_resampled_2_0m.json'\\)\\); print\\('Points:', len\\(data['points']\\), 'Total length:', data.get\\('total_lap_length', 'N/A'\\), 'Spacing:', data.get\\('spacing', 'N/A'\\)\\)\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Jango\\\\workspace\\\\BeamNG\" -Directory)",
+      "Bash(Select-Object Name)",
+      "PowerShell(\\(Get-Item -Path \"c:\\\\Users\\\\Jango\\\\workspace\\\\BeamNG\\\\models\\\\runs\" -ErrorAction SilentlyContinue | Get-ChildItem | Select-Object Name -First 5\\))",
+      "Bash(git -C \"c:\\\\Users\\\\Jango\\\\workspace\\\\BeamNG\" status)"
     ]
   }
 }
