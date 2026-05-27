@@ -53,7 +53,7 @@ except ImportError as exc:
     ) from exc
 
 from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv, RewardConfig
-from beamng_rl.training.callbacks import RewardComponentLogger, StepProgressWriter
+from beamng_rl.training.callbacks import RewardComponentLogger, StepProgressWriter, StopSignalCallback
 from beamng_rl.training.run_manager import RunManager, prompt_run_name
 
 # ---------------------------------------------------------------------------
@@ -81,6 +81,8 @@ ROLLOUT_STEPS    = 500
 
 # Written every rollout so the launcher UI can show real-time step progress.
 _PROGRESS_FILE = REPO_ROOT / "logs" / "remote" / "current_steps.txt"
+# Written by the launcher stop button to trigger a graceful shutdown.
+_STOP_SIGNAL_FILE = REPO_ROOT / "logs" / "remote" / "stop_signal.txt"
 
 # ---------------------------------------------------------------------------
 # Env / PPO config — all values here are captured in run_config.json
@@ -320,11 +322,18 @@ def main() -> None:
         print(f"  Checkpoints : {checkpoint_dir}")
 
         _PROGRESS_FILE.unlink(missing_ok=True)
+        _STOP_SIGNAL_FILE.unlink(missing_ok=True)
         model.learn(
             total_timesteps=total_timesteps,
-            callback=[checkpoint_cb, RewardComponentLogger(), StepProgressWriter(_PROGRESS_FILE)],
+            callback=[
+                checkpoint_cb,
+                RewardComponentLogger(),
+                StepProgressWriter(_PROGRESS_FILE),
+                StopSignalCallback(_STOP_SIGNAL_FILE),
+            ],
         )
         _PROGRESS_FILE.unlink(missing_ok=True)
+        _STOP_SIGNAL_FILE.unlink(missing_ok=True)
 
         model_path = rm.run_dir(run_name) / "model_final.zip"
         model.save(str(model_path))
