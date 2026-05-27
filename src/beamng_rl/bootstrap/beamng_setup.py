@@ -85,6 +85,37 @@ def build_hirochi_etkc_scenario(
     return scenario, vehicle
 
 
+def build_hirochi_sbr_scenario(
+    bng: Any,
+    *,
+    vehicle_id: str = "ego_vehicle",
+    scenario_instance_name: str = "sbr_bootstrap",
+) -> tuple[Any, Any]:
+    """Build the Hirochi Raceway SBR4 Track scenario."""
+
+    # BeamNGpy is imported lazily so importing the Gym env in mock mode never
+    # requires a BeamNG.tech installation or the beamngpy package.
+    from beamngpy import Scenario, Vehicle
+
+    scenario = Scenario(
+        "hirochi_raceway",
+        scenario_instance_name,
+        description="SBR4 Track bootstrap scenario",
+    )
+
+    vehicle = Vehicle(
+        vehicle_id,
+        model="sbr",
+        part_config="vehicles/sbr/track.pc",
+        license="JANGO",
+        color="Red",
+    )
+
+    scenario.add_vehicle(vehicle, pos=SPAWN_POS, rot_quat=SPAWN_ROT)
+    scenario.make(bng)
+    return scenario, vehicle
+
+
 def is_student_beamng_home(beamng_home: Path) -> bool:
     """Return whether the selected install is the Student-machine BeamNG path."""
 
