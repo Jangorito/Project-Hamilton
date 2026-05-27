@@ -30,7 +30,7 @@ param(
     [string]$BeamNGProcess  = "BeamNG.x64"
 )
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $LogDir   = Join-Path $RepoRoot "logs\remote"
 $PidFile  = Join-Path $LogDir "training.pid"
 $LogLink  = Join-Path $LogDir "latest.log"
@@ -88,10 +88,13 @@ if ($existing) {
 
 # ── Resolve python ────────────────────────────────────────────────────────────
 $PythonExe = Join-Path $RepoRoot "venv\Scripts\python.exe"
+if (-not (Test-Path $PythonExe)) {
+    $PythonExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+}
 if (-not (Test-Path $PythonExe)) { $PythonExe = "python" }
 
 # ── Build argument string ─────────────────────────────────────────────────────
-$TrainArgs = "scripts\train_live_ppo_run.py"
+$TrainArgs = "scripts\train\train_live_ppo_run.py"
 if ($Fresh)   { $TrainArgs += " --fresh" }
 if ($RunName) { $TrainArgs += " --run-name $RunName" }
 
@@ -109,7 +112,7 @@ if (-not (Test-Path $LogLink)) {
 }
 
 # ── OBS: start stream ────────────────────────────────────────────────────────
-$OBSArgs = "scripts\obs_control.py --port $OBSPort --process $BeamNGProcess"
+$OBSArgs = "scripts\env\obs_control.py --port $OBSPort --process $BeamNGProcess"
 if ($env:OBS_WEBSOCKET_PASSWORD) { $OBSArgs += " --password $env:OBS_WEBSOCKET_PASSWORD" }
 
 if ($Stream) {
