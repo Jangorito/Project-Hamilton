@@ -766,6 +766,7 @@ let toastTimer = null;
 let userTouchedCar = false;
 let userTouchedSpeed = false;
 let userTouchedReward = false;
+let runDetails = {};
 const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
 
@@ -773,6 +774,10 @@ const SPEED_FACTORS = [1, 2, 4, 8, 16, 32];
 const CAR_LABELS = {
   sbr: 'SBR4 Track',
   etkc: 'ETK K-Series Trackday A',
+};
+const CAR_RUN_SUFFIXES = {
+  sbr: 'subaru',
+  etkc: 'etk',
 };
 
 function selectedSpeedFactor() {
@@ -809,8 +814,15 @@ function initRadioGroups() {
       el.querySelector('input[type="radio"]').checked = true;
       if (group === 'mode') onModeChange(el.dataset.value);
       if (group === 'run_mode') onRunModeChange(el.dataset.value);
-      if (group === 'car') userTouchedCar = true;
-      if (group === 'reward') userTouchedReward = true;
+      if (group === 'car') {
+        userTouchedCar = true;
+        validateResumeCarChoice();
+        updateFreshNameSuggestion();
+      }
+      if (group === 'reward') {
+        userTouchedReward = true;
+        updateFreshNameSuggestion();
+      }
     });
   });
 }
@@ -826,10 +838,14 @@ function onModeChange(mode) {
 function onRunModeChange(mode) {
   document.getElementById('resume-select').style.display = mode === 'resume' ? '' : 'none';
   document.getElementById('fresh-name').style.display    = mode === 'fresh'  ? '' : 'none';
+  if (mode === 'fresh') updateFreshNameSuggestion();
+  if (mode === 'resume') validateResumeCarChoice();
 }
 
 function initRunMode() {
   document.getElementById('fresh-name').style.display = 'none';
+  document.getElementById('resume-select').addEventListener('change', validateResumeCarChoice);
+  updateFreshNameSuggestion();
 }
 
 // ── Slider ───────────────────────────────────────────────────
@@ -888,11 +904,68 @@ function setCarSelection(key) {
   });
 }
 
+function selectedCar() {
+  return document.querySelector('input[name="car"]:checked').value;
+}
+
+function selectedRewardConfig() {
+  return document.querySelector('input[name="reward"]:checked').value;
+}
+
+function selectedRunMode() {
+  return document.querySelector('input[name="run_mode"]:checked').value;
+}
+
+function setRunMode(mode) {
+  document.querySelectorAll('.radio-option[data-group="run_mode"]').forEach(el => {
+    const match = el.dataset.value === mode;
+    el.classList.toggle('selected', match);
+    el.querySelector('input[type="radio"]').checked = match;
+  });
+  onRunModeChange(mode);
+}
+
+function suggestedFreshRunName() {
+  const suffix = CAR_RUN_SUFFIXES[selectedCar()] || selectedCar();
+  return `${selectedRewardConfig()}_${suffix}`;
+}
+
+function isAutoFreshRunName(value) {
+  return /^(v1|v2)_(subaru|etk)$/i.test(value.trim());
+}
+
+function updateFreshNameSuggestion() {
+  const input = document.getElementById('fresh-name');
+  const suggested = suggestedFreshRunName();
+  input.placeholder = `Run name (e.g. ${suggested})`;
+  if (selectedRunMode() === 'fresh' && (!input.value.trim() || isAutoFreshRunName(input.value))) {
+    input.value = suggested;
+  }
+}
+
+function validateResumeCarChoice() {
+  if (isTraining || selectedRunMode() !== 'resume') return;
+  const select = document.getElementById('resume-select');
+  const runName = select.value;
+  if (!runName) return;
+  const details = runDetails[runName] || {};
+  const car = selectedCar();
+  if (!details.car || details.car !== car) {
+    setRunMode('fresh');
+    updateFreshNameSuggestion();
+    const reason = details.car_label && details.car
+      ? `${runName} is ${details.car_label}`
+      : `${runName} has no saved vehicle metadata`;
+    toast(`${reason}. Starting fresh for ${CAR_LABELS[car]}.`, 'info');
+  }
+}
+
 // ── Load runs ─────────────────────────────────────────────────
 async function loadRuns() {
   try {
     const r = await fetch('/api/runs');
     const d = await r.json();
+    runDetails = d.details || {};
     const sel = document.getElementById('resume-select');
     sel.innerHTML = '';
     if (!d.runs.length) {
@@ -904,6 +977,7 @@ async function loadRuns() {
       opt.value = opt.textContent = name;
       sel.appendChild(opt);
     });
+    validateResumeCarChoice();
   } catch (e) {}
 }
 
