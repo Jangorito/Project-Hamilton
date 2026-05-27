@@ -18,8 +18,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import shutil
-
 from flask import Flask, jsonify, render_template, request
 
 LAUNCHER_DIR = Path(__file__).resolve().parent
@@ -37,6 +35,7 @@ LOG_DIR = REPO_ROOT / "logs" / "remote"
 PID_FILE = LOG_DIR / "training.pid"
 LOG_LINK = LOG_DIR / "latest.log"
 PROGRESS_FILE = LOG_DIR / "current_steps.txt"
+STOP_SIGNAL_FILE = LOG_DIR / "stop_signal.txt"
 SESSION_CONFIG_PATH = REPO_ROOT / "config" / "launcher_session.json"
 
 OBS_PORT = int(os.environ.get("OBS_PORT", 4455))
@@ -285,44 +284,13 @@ def api_launch():
 def api_stop_training():
     if not _is_training():
         return jsonify({"ok": False, "message": "No training process found."})
-    current_steps = _read_live_steps() or _pace["steps"]
-    pid = _get_training_pid()
-    if pid is not None:
-        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
-    subprocess.run(
-        ["wmic", "process", "where",
-         "name='python.exe' and commandline like '%train_live_ppo_run%'",
-         "call", "terminate"],
-        capture_output=True,
-    )
-    _finalize_stopped_run(current_steps)
-    return jsonify({"ok": True, "message": "Training stopped and finalized."})
+    STOP_SIGNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STOP_SIGNAL_FILE.write_text("stop", encoding="utf-8")
+    return jsonify({
+        "ok": True,
+        "message": "Stop signal sent — training will save model and run evaluation after the current rollout.",
+    })
 
-
-def _finalize_stopped_run(current_steps: int) -> None:
-    """Write the same end-of-run artifacts that normal training completion would produce."""
-    run_name = rm.find_latest_run()
-    PROGRESS_FILE.unlink(missing_ok=True)
-    if not run_name:
-        return
-    # Copy latest checkpoint to model_final.zip so there's a usable final model.
-    ckpt = rm.find_latest_checkpoint(run_name)
-    if ckpt:
-        try:
-            shutil.copy2(ckpt, rm.run_dir(run_name) / "model_final.zip")
-        except OSError:
-            pass
-    config = rm.load_config(run_name)
-    total_steps = config.get("training", {}).get("total_timesteps", 0)
-    results = {
-        "status": "stopped_early",
-        "steps_completed": current_steps,
-        "total_planned": total_steps,
-    }
-    try:
-        rm.finalize_run(run_name, results)
-    except Exception:
-        pass
 
 
 @app.route("/api/stop/stream", methods=["POST"])

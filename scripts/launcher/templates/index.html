@@ -812,7 +812,7 @@ async function pollStatus() {
     setPill('pill-beamng',    d.is_beamng);
 
     // Run info in header
-    if (d.run_name) {
+    if (d.run_name && d.is_training) {
       const cur = (d.current_steps || 0).toLocaleString();
       const tot = (d.total_steps  || 0).toLocaleString();
       document.getElementById('header-run-info').textContent =
@@ -822,12 +822,13 @@ async function pollStatus() {
     }
 
     // Progress bar
-    const pct = d.total_steps > 0
+    const pct = d.is_training && d.total_steps > 0
       ? Math.min(100, (d.current_steps / d.total_steps) * 100)
       : 0;
     document.getElementById('progress-fill').style.width = pct + '%';
-    document.getElementById('progress-text').textContent =
-      `${(d.current_steps||0).toLocaleString()} / ${(d.total_steps||0).toLocaleString()} steps`;
+    document.getElementById('progress-text').textContent = d.is_training
+      ? `${(d.current_steps||0).toLocaleString()} / ${(d.total_steps||0).toLocaleString()} steps`
+      : '— / — steps';
 
     // Update measured pace so slider estimate stays accurate after steps_per_action changes.
     if (d.steps_per_second != null) {
