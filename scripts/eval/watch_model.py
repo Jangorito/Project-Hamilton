@@ -5,15 +5,15 @@ then draws the driven trajectory on the circuit in 3D.
 
 Usage:
     # Best checkpoint from a named run (uses checkpoints_eval.csv if present)
-    python scripts/watch_model.py --run v2_smoother
+    python scripts/eval/watch_model.py --run v2_smoother
 
     # Latest checkpoint from the most recent run
-    python scripts/watch_model.py
+    python scripts/eval/watch_model.py
 
     # Explicit model file
-    python scripts/watch_model.py path/to/model.zip
+    python scripts/eval/watch_model.py path/to/model.zip
 
-    python scripts/watch_model.py --run v2_smoother --steps 800
+    python scripts/eval/watch_model.py --run v2_smoother --steps 800
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import csv
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
@@ -56,6 +56,21 @@ def _best_checkpoint_from_eval(run_name: str, rm: RunManager) -> Path | None:
     return Path(best_ckpt) if best_ckpt and Path(best_ckpt).is_file() else None
 
 
+def _vehicle_model_for_run(run_name: str | None, rm: RunManager) -> str:
+    if run_name is None:
+        print("Warning: no run name known — defaulting vehicle_model to 'etkc'.")
+        return "etkc"
+    config = rm.load_config(run_name)
+    vehicle_model = config.get("env", {}).get("vehicle_model", "").strip().lower()
+    if vehicle_model not in ("sbr", "etkc"):
+        print(
+            f"Warning: vehicle_model not found in run_config.json for run '{run_name}'"
+            " — defaulting to 'etkc'."
+        )
+        return "etkc"
+    return vehicle_model
+
+
 def _resolve_model(args: argparse.Namespace, rm: RunManager) -> tuple[Path, str | None]:
     """Return (model_path, run_name). Exits if nothing can be found."""
     if args.model_path:
@@ -85,13 +100,18 @@ def main() -> None:
                         help="Run name to load the best checkpoint from.")
     parser.add_argument("--steps", type=int, default=500,
                         help="Max episode steps to run.")
+    parser.add_argument("--no-wait", action="store_true",
+                        help="Skip the interactive pause at end (for GUI launcher).")
     args = parser.parse_args()
 
     rm = RunManager()
     model_path, run_name = _resolve_model(args, rm)
 
+    vehicle_model = _vehicle_model_for_run(run_name, rm)
+
     print(f"Run     : {run_name or '(direct path)'}")
     print(f"Model   : {model_path.name}")
+    print(f"Vehicle : {vehicle_model}")
     print("Launching BeamNG — watch the car drive in the BeamNG window.")
 
     env: BeamNGRacingEnv | None = None
@@ -102,6 +122,7 @@ def main() -> None:
             launch_beamng=True,
             live_spawn_mode="bootstrap",
             vehicle_id="ego_vehicle",
+            vehicle_model=vehicle_model,
             steps_per_action=15,
             max_episode_steps=args.steps,
             max_lateral_error_m=10.0,
@@ -147,7 +168,11 @@ def main() -> None:
         elif not positions:
             print("No positions logged — path drawing skipped.")
 
-        input("\nPress Enter to close BeamNG...")
+        if args.no_wait:
+            import time
+            time.sleep(86400)
+        else:
+            input("\nPress Enter to close BeamNG...")
 
     finally:
         if env is not None:
