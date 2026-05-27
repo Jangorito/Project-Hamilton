@@ -501,6 +501,7 @@ def api_launch():
         "speed_factor": speed_factor,
         "timing_profile": timing_profile,
         "reward_config": reward_config,
+        "debug_mode": debug_mode,
     })
     _save_session_config(session)
 
