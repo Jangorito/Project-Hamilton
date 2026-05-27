@@ -10,6 +10,7 @@ allowing centreline-aligned reset poses for RL experiments.
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -1017,10 +1018,14 @@ class BeamNGRacingEnv(gym.Env):
             }
             print(f"Building Hirochi scenario for vehicle_model={self.vehicle_model}")
             _scenario_builder = scenario_builders[self.vehicle_model]
+            scenario_instance_name = (
+                f"beamng_rl_{self.vehicle_model}_{self.vehicle_id}_{os.getpid()}"
+            )
+            print(f"Generated scenario instance: {scenario_instance_name}")
             scenario, vehicle = _scenario_builder(
                 beamng,
                 vehicle_id=self.vehicle_id,
-                scenario_instance_name=f"beamng_rl_{self.vehicle_id}",
+                scenario_instance_name=scenario_instance_name,
             )
 
             from beamngpy.sensors import Damage
