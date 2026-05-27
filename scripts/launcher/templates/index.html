@@ -868,6 +868,8 @@ function initSpeedSlider() {
     userTouchedSpeed = true;
     measuredStepsPerSecond = null;
     updateSpeedDisplay();
+    validateResumeCarChoice();
+    updateFreshNameSuggestion();
   });
   updateSpeedDisplay();
 }
@@ -877,7 +879,7 @@ function updateSpeedDisplay() {
   const sf = SPEED_FACTORS[idx];
   document.getElementById('speed-val').textContent = sf + 'x';
   updateSliderDisplay();
-  document.getElementById('speed-sub').textContent = sf === 1 ? 'real-time' : sf + '× faster than real-time';
+  document.getElementById('speed-sub').textContent = sf === 1 ? 'real-time' : 'target ' + sf + '× faster than real-time';
 }
 
 function setSpeedSliderFromValue(sf) {
@@ -927,11 +929,13 @@ function setRunMode(mode) {
 
 function suggestedFreshRunName() {
   const suffix = CAR_RUN_SUFFIXES[selectedCar()] || selectedCar();
-  return `${selectedRewardConfig()}_${suffix}`;
+  const speed = selectedSpeedFactor();
+  const speedSuffix = speed > 1 ? `_${speed}x` : '';
+  return `${selectedRewardConfig()}_${suffix}${speedSuffix}`;
 }
 
 function isAutoFreshRunName(value) {
-  return /^(v1|v2)_(subaru|etk)$/i.test(value.trim());
+  return /^(v1|v2)_(subaru|etk)(_(2|4|8|16|32)x)?$/i.test(value.trim());
 }
 
 function updateFreshNameSuggestion() {
@@ -950,14 +954,22 @@ function validateResumeCarChoice() {
   if (!runName) return;
   const details = runDetails[runName] || {};
   const car = selectedCar();
-  const canResume = details.car === car || (!details.car && car === 'sbr');
-  if (!canResume) {
+  const speed = selectedSpeedFactor();
+  const runTiming = details.timing_profile || (details.speed_factor > 1 ? 'det50ms' : 'legacy_60hz');
+  const requestedTiming = runTiming === 'det50ms'
+    ? 'det50ms'
+    : (speed > 1 ? 'det50ms' : 'legacy_60hz');
+  const canResumeCar = details.car === car || (!details.car && car === 'sbr');
+  const canResumeTiming = runTiming === requestedTiming;
+  if (!canResumeCar || !canResumeTiming) {
     setRunMode('fresh');
     updateFreshNameSuggestion();
-    const reason = details.car_label && details.car
-      ? `${runName} is ${details.car_label}`
-      : `${runName} has no saved vehicle metadata`;
-    toast(`${reason}. Starting fresh for ${CAR_LABELS[car]}.`, 'info');
+    const reason = !canResumeCar
+      ? (details.car_label && details.car
+        ? `${runName} is ${details.car_label}`
+        : `${runName} has no saved vehicle metadata`)
+      : `${runName} was created for ${runTiming} timing`;
+    toast(`${reason}. Starting fresh for ${CAR_LABELS[car]} at ${speed}x.`, 'info');
   }
 }
 
@@ -975,7 +987,12 @@ async function loadRuns() {
     }
     d.runs.slice().reverse().forEach(name => {
       const opt = document.createElement('option');
-      opt.value = opt.textContent = name;
+      const details = runDetails[name] || {};
+      const meta = [];
+      if (details.car_label) meta.push(details.car_label);
+      if (details.speed_label) meta.push(details.speed_label);
+      opt.value = name;
+      opt.textContent = meta.length ? `${name} (${meta.join(', ')})` : name;
       sel.appendChild(opt);
     });
     validateResumeCarChoice();
