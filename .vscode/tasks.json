@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Jango: pull + restart Flask",
+      "type": "shell",
+      "command": "ssh",
+      "args": [
+        "-t",
+        "jango@JANGO_IP",
+        "powershell -NoExit -ExecutionPolicy Bypass -File C:\\Users\\Jango\\workspace\\BeamNG\\scripts\\launcher\\restart_flask.ps1"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "focus": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
