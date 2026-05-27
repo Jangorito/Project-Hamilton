@@ -52,7 +52,7 @@ except ImportError as exc:
         "  .\\venv\\Scripts\\python.exe -m pip install \"stable-baselines3>=2.3.0\""
     ) from exc
 
-from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv, RewardConfig
+from beamng_rl.envs.beamng_racing_env import REWARD_CONFIGS, BeamNGRacingEnv, RewardConfig
 from beamng_rl.training.callbacks import RewardComponentLogger, StepProgressWriter, StopSignalCallback
 from beamng_rl.training.run_manager import RunManager, prompt_run_name
 
@@ -206,8 +206,9 @@ def _run_deterministic_rollout(
     return final_progress - start_progress, final_reason, jump_count
 
 
-def _build_run_config() -> dict[str, Any]:
-    reward_defaults = vars(RewardConfig())
+def _build_run_config(reward_config: RewardConfig, reward_key: str) -> dict[str, Any]:
+    # Include config_key so run_config.json and run_info.md are self-documenting:
+    # any reader can immediately see which experiment arm produced these results.
     return {
         "training": dict(
             total_timesteps  = TOTAL_TIMESTEPS,
@@ -216,7 +217,7 @@ def _build_run_config() -> dict[str, Any]:
         ),
         "ppo":     PPO_CONFIG,
         "env":     ENV_CONFIG,
-        "reward":  reward_defaults,
+        "reward":  {"config_key": reward_key, **vars(reward_config)},
     }
 
 
@@ -230,6 +231,13 @@ def main() -> None:
                         help="Start a new experiment from scratch.")
     parser.add_argument("--run-name", metavar="NAME",
                         help="Name for this training run.")
+    # Selects the named reward preset from REWARD_CONFIGS. Keeping this as an
+    # explicit flag (rather than a constant) means both experiment arms can be
+    # launched from the same codebase with a single flag change and no risk of
+    # editing the wrong values between runs.
+    parser.add_argument("--reward-config", metavar="KEY", default=None,
+                        help="Reward config key from REWARD_CONFIGS (v1 or v2). "
+                             "Default: v1. Can also be set via launcher_session.json.")
     args = parser.parse_args()
 
     # CLI args take precedence over launcher session config.
@@ -238,14 +246,29 @@ def main() -> None:
     vehicle_model   = str(session.get("car", "etkc"))
     max_damage      = float(session.get("max_damage", ENV_CONFIG["max_damage"]))
     fresh           = args.fresh or bool(session.get("fresh", False))
-    run_name_hint   = args.run_name or session.get("run_name", "") or None
     _sf             = session.get("speed_factor")
     speed_factor    = int(_sf) if _sf is not None else None
+
+    # Resolve reward config key: CLI > launcher session > default "v1".
+    reward_key = args.reward_config or str(session.get("reward_config", "v1"))
+    if reward_key not in REWARD_CONFIGS:
+        sys.exit(
+            f"Error: unknown reward config key {reward_key!r}. "
+            f"Valid keys: {sorted(REWARD_CONFIGS)}"
+        )
+    reward_config = REWARD_CONFIGS[reward_key]
+
+    # Auto-generate a run name that embeds the car model and reward config key
+    # so TensorBoard log directories and checkpoint folders are self-labelling.
+    # e.g. --reward-config v1 on etkc -> "etkc_v1", v2 -> "etkc_v2".
+    # A manual --run-name or launcher session name always takes precedence.
+    run_name_hint = args.run_name or session.get("run_name", "") or f"{vehicle_model}_{reward_key}"
 
     if session:
         sf_label = f"{speed_factor}x" if speed_factor is not None else "default"
         print(f"Launcher config: car={vehicle_model}, steps={total_timesteps}, "
-              f"max_damage={max_damage}, fresh={fresh}, speed_factor={sf_label}")
+              f"max_damage={max_damage}, fresh={fresh}, speed_factor={sf_label}, "
+              f"reward_config={reward_key}")
 
     if not CENTRELINE_PATH.is_file():
         raise FileNotFoundError(f"Centreline JSON not found: {CENTRELINE_PATH}")
@@ -265,7 +288,7 @@ def main() -> None:
                 "Choose a different name or omit --fresh to resume it."
             )
         resume_path = None
-        rm.create_run(run_name, _build_run_config())
+        rm.create_run(run_name, _build_run_config(reward_config, reward_key))
         print(f"Created run: {run_name}")
     else:
         run_name = run_name_hint or rm.find_latest_run()
@@ -289,6 +312,12 @@ def main() -> None:
 
     env: BeamNGRacingEnv | None = None
     try:
+        # Log the reward config key prominently so the terminal output is
+        # self-documenting and easy to grep when comparing run logs.
+        print(f"\nReward config  : {reward_key}")
+        for field_name, value in vars(reward_config).items():
+            print(f"  {field_name}: {value}")
+
         env = BeamNGRacingEnv(
             CENTRELINE_PATH,
             use_mock=False,
@@ -296,6 +325,7 @@ def main() -> None:
             live_spawn_mode="bootstrap",
             vehicle_id="ego_vehicle",
             vehicle_model=vehicle_model,
+            reward_config=reward_config,
             speed_factor=speed_factor,
             **env_config,
         )

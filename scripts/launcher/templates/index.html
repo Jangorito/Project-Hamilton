@@ -581,6 +581,29 @@
         </div>
       </div>
 
+      <!-- Reward Config -->
+      <div class="panel-section" id="reward-section">
+        <div class="section-label">Reward Config</div>
+        <div class="radio-group" id="reward-group">
+          <label class="radio-option selected" data-group="reward" data-value="v1">
+            <input type="radio" name="reward" value="v1" checked>
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V1 — Baseline</div>
+              <div class="radio-sub">Speed bonus · full centreline · weak smoothness</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="reward" data-value="v2">
+            <input type="radio" name="reward" value="v2">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2 — Literature</div>
+              <div class="radio-sub">No speed bonus · strong smoothness · relaxed centreline</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
       <!-- Mode -->
       <div class="panel-section">
         <div class="section-label">Mode</div>
@@ -767,7 +790,7 @@ function initRadioGroups() {
 }
 
 function onModeChange(mode) {
-  const trainingOnly = ['run-section', 'steps-section', 'speed-section', 'stream-section'];
+  const trainingOnly = ['reward-section', 'run-section', 'steps-section', 'speed-section', 'stream-section'];
   trainingOnly.forEach(id => {
     document.getElementById(id).style.display =
       (mode === 'training') ? '' : 'none';
@@ -816,6 +839,14 @@ function setSpeedSliderFromValue(sf) {
     document.getElementById('speed-slider').value = idx;
     updateSpeedDisplay();
   }
+}
+
+function setRewardConfig(key) {
+  document.querySelectorAll('.radio-option[data-group="reward"]').forEach(el => {
+    const match = el.dataset.value === key;
+    el.classList.toggle('selected', match);
+    el.querySelector('input[type="radio"]').checked = match;
+  });
 }
 
 // ── Load runs ─────────────────────────────────────────────────
@@ -890,8 +921,9 @@ async function pollStatus() {
       stopBtn.disabled = false;
     }
 
-    // Speed factor — restore slider from last saved session
+    // Restore speed factor and reward config from last saved session
     if (!isTraining && d.speed_factor != null) setSpeedSliderFromValue(d.speed_factor);
+    if (!isTraining && d.reward_config != null) setRewardConfig(d.reward_config);
 
     // Damage meta
     if (d.max_damage != null) {
@@ -946,6 +978,7 @@ async function launch() {
   const stream       = document.getElementById('stream-toggle').checked;
   const maxDamage    = parseFloat(document.getElementById('damage-input').value) || 500;
   const speedFactor  = SPEED_FACTORS[parseInt(document.getElementById('speed-slider').value)];
+  const rewardConfig = document.querySelector('input[name="reward"]:checked').value;
 
   const btn = document.getElementById('launch-btn');
   btn.disabled = true;
@@ -955,7 +988,7 @@ async function launch() {
     const r = await fetch('/api/launch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor }),
+      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig }),
     });
     const d = await r.json();
     toast(d.message, d.ok ? 'success' : 'error');
