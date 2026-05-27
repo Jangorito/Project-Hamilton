@@ -378,8 +378,8 @@
 
   .btn-group { display: flex; flex-direction: column; gap: 8px; }
 
-  /* ── Screenshot ───────────────────────────────────────────── */
-  .screenshot-wrap {
+  /* ── Twitch embed ──────────────────────────────────────────── */
+  .twitch-wrap {
     position: relative;
     background: #000;
     border: 1px solid var(--border);
@@ -389,31 +389,12 @@
     margin-bottom: 12px;
   }
 
-  .screenshot-wrap img {
+  .twitch-embed {
     width: 100%;
     height: 100%;
-    object-fit: contain;
     display: block;
+    border: none;
   }
-
-  .screenshot-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0,0,0,0.7);
-    color: var(--muted);
-    font-size: 13px;
-    gap: 8px;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-
-  .screenshot-overlay.visible { opacity: 1; }
-  .screenshot-overlay .no-signal { font-size: 32px; line-height: 1; }
 
   /* ── Progress bar ─────────────────────────────────────────── */
   .progress-wrap {
@@ -693,15 +674,16 @@
     <!-- ── Right panel: Monitor ───────────────────────────────── -->
     <div class="panel panel-right">
 
-      <!-- Screenshot -->
+      <!-- Twitch stream -->
       <div class="panel-section">
-        <div class="section-label" style="margin-bottom:8px">OBS Capture</div>
-        <div class="screenshot-wrap" id="screenshot-wrap">
-          <img id="screenshot-img" src="" alt="" style="display:none" onload="onScreenshotLoaded()" onerror="onScreenshotError()">
-          <div class="screenshot-overlay visible" id="screenshot-overlay">
-            <div class="no-signal">◫</div>
-            <div>No signal</div>
-          </div>
+        <div class="section-label" style="margin-bottom:8px">Live Stream</div>
+        <div class="twitch-wrap">
+          <iframe
+            src="https://player.twitch.tv/?channel=jangorito&parent=localhost&muted=false"
+            class="twitch-embed"
+            allowfullscreen="true"
+            scrolling="no">
+          </iframe>
         </div>
       </div>
 
@@ -726,6 +708,7 @@
           </div>
         </div>
         <div style="margin-top:8px">
+          <div id="log-updated" style="font-size:11px; color:var(--muted); font-family:var(--font-mono); margin-bottom:4px;">—</div>
           <div class="log-container" id="log-container">
             <div class="log-line">Waiting for training to start...</div>
           </div>
@@ -750,7 +733,6 @@
       <div class="panel-section">
         <div class="section-label">Quick Actions</div>
         <div class="actions-row">
-          <button class="btn btn-sm" onclick="refreshScreenshot()">Refresh Screenshot</button>
           <button class="btn btn-sm" onclick="startStream()">Start Stream</button>
           <button class="btn btn-sm" onclick="wakeScreen()">Wake Screen</button>
         </div>
@@ -766,7 +748,6 @@
 <script>
 // ── State ────────────────────────────────────────────────────
 let isTraining = false;
-let screenshotTimer = null;
 let toastTimer = null;
 const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
@@ -782,7 +763,6 @@ document.addEventListener('DOMContentLoaded', () => {
   pollLog();
   setInterval(pollStatus, 3000);
   setInterval(pollLog, 5000);
-  refreshScreenshot();
 });
 
 // ── Radio groups ─────────────────────────────────────────────
@@ -894,15 +874,8 @@ async function pollStatus() {
     dot.classList.toggle('active', d.is_training);
     lbl.textContent = d.is_training ? 'live' : 'idle';
 
-    // Screenshot auto-refresh when training
-    if (d.is_training && !screenshotTimer) {
-      screenshotTimer = setInterval(refreshScreenshot, 15000);
-    } else if (!d.is_training && screenshotTimer) {
-      clearInterval(screenshotTimer);
-      screenshotTimer = null;
-    }
-
     isTraining = d.is_training;
+    document.getElementById('launch-btn').disabled = isTraining;
 
     // Damage meta
     if (d.max_damage != null) {
@@ -939,29 +912,9 @@ async function pollLog() {
       `<div class="log-line">${escHtml(l)}</div>`
     ).join('');
     if (atBottom) el.scrollTop = el.scrollHeight;
+    document.getElementById('log-updated').textContent =
+      'Last update: ' + new Date().toLocaleTimeString();
   } catch (e) {}
-}
-
-// ── Screenshot ────────────────────────────────────────────────
-async function refreshScreenshot() {
-  await fetch('/api/screenshot/refresh', { method: 'POST' });
-  loadScreenshot();
-}
-
-function loadScreenshot() {
-  const img = document.getElementById('screenshot-img');
-  img.src = '/api/screenshot?t=' + Date.now();
-}
-
-function onScreenshotLoaded() {
-  const img = document.getElementById('screenshot-img');
-  img.style.display = 'block';
-  document.getElementById('screenshot-overlay').classList.remove('visible');
-}
-
-function onScreenshotError() {
-  document.getElementById('screenshot-img').style.display = 'none';
-  document.getElementById('screenshot-overlay').classList.add('visible');
 }
 
 // ── Launch ────────────────────────────────────────────────────
