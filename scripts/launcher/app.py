@@ -35,6 +35,7 @@ LOG_DIR = REPO_ROOT / "logs" / "remote"
 PID_FILE = LOG_DIR / "training.pid"
 LOG_LINK = LOG_DIR / "latest.log"
 SCREENSHOT_PATH = LOG_DIR / "obs_screenshot.png"
+PROGRESS_FILE = LOG_DIR / "current_steps.txt"
 SESSION_CONFIG_PATH = REPO_ROOT / "config" / "launcher_session.json"
 
 OBS_PORT = int(os.environ.get("OBS_PORT", 4455))
@@ -44,8 +45,13 @@ PYTHON_EXE = REPO_ROOT / "venv" / "Scripts" / "python.exe"
 if not PYTHON_EXE.exists():
     PYTHON_EXE = Path("python")
 
-# Approximate training pace on Jango (~27k steps / 2 hours)
-_STEPS_PER_SECOND = 27_000 / 7_200
+# Fallback pace used before a real measurement is available.
+_STEPS_PER_SECOND_FALLBACK = 27_000 / 7_200
+
+# Pace tracker — updated by _read_live_steps() from consecutive progress file writes.
+# Using file mtime as the timestamp means the rate reflects actual wall-clock training
+# speed, so it automatically adjusts when steps_per_action or physics rate changes.
+_pace: dict = {"mtime": 0.0, "steps": 0, "rate": None}
 
 # Guard: refuse to set max_damage below this to protect against fat-finger triggers
 _MIN_DAMAGE_THRESHOLD = 50.0
@@ -94,23 +100,50 @@ def _is_training() -> bool:
 
 def _is_streaming() -> bool:
     try:
-        import obsws_python as obs
+        import obsws_python as obs # type: ignore
         cl = obs.ReqClient(host="localhost", port=OBS_PORT, password=OBS_PASSWORD, timeout=2)
         return bool(cl.get_stream_status().output_active)
     except Exception:
         return False
 
 
+def _read_live_steps() -> int | None:
+    """Read current timestep from StepProgressWriter and update the pace tracker."""
+    if not PROGRESS_FILE.exists():
+        _pace["mtime"] = 0.0
+        _pace["steps"] = 0
+        _pace["rate"] = None
+        return None
+    try:
+        steps = int(PROGRESS_FILE.read_text(encoding="utf-8").strip())
+        mtime = PROGRESS_FILE.stat().st_mtime
+    except (ValueError, OSError):
+        return None
+    if _pace["mtime"] > 0 and mtime > _pace["mtime"]:
+        dt = mtime - _pace["mtime"]
+        ds = steps - _pace["steps"]
+        if dt > 0 and ds > 0:
+            _pace["rate"] = ds / dt
+    if mtime != _pace["mtime"]:
+        _pace["mtime"] = mtime
+        _pace["steps"] = steps
+    return steps
+
+
 def _get_active_run_info() -> dict:
     run_name = rm.find_latest_run()
     if not run_name:
         return {"run_name": None, "current_steps": 0, "total_steps": 100_000}
-    ckpt = rm.find_latest_checkpoint(run_name)
-    current_steps = 0
-    if ckpt:
-        match = re.search(r"_(\d+)_steps", ckpt.stem)
-        if match:
-            current_steps = int(match.group(1))
+    # Prefer the live progress file (updated every rollout by StepProgressWriter).
+    # Fall back to the latest checkpoint name when no live file exists.
+    current_steps = _read_live_steps()
+    if current_steps is None:
+        ckpt = rm.find_latest_checkpoint(run_name)
+        current_steps = 0
+        if ckpt:
+            match = re.search(r"_(\d+)_steps", ckpt.stem)
+            if match:
+                current_steps = int(match.group(1))
     config = rm.load_config(run_name)
     total_steps = config.get("training", {}).get("total_timesteps", 100_000)
     return {"run_name": run_name, "current_steps": current_steps, "total_steps": total_steps}
@@ -118,7 +151,8 @@ def _get_active_run_info() -> dict:
 
 def _eta_seconds(current_steps: int, total_steps: int) -> int:
     remaining = max(0, total_steps - current_steps)
-    return int(remaining / _STEPS_PER_SECOND)
+    rate = _pace["rate"] if _pace["rate"] is not None else _STEPS_PER_SECOND_FALLBACK
+    return int(remaining / rate)
 
 
 def _load_session_config() -> dict:
@@ -162,6 +196,7 @@ def api_status():
         "current_steps": run_info["current_steps"],
         "total_steps": run_info["total_steps"],
         "eta_seconds": eta,
+        "steps_per_second": _pace["rate"],
         "max_damage": session.get("max_damage"),
         "prev_max_damage": session.get("prev_max_damage"),
     })
