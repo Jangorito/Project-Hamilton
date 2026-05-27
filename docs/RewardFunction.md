@@ -16,6 +16,8 @@ reward =
     - reverse_progress_penalty_if_applicable
     - stuck_penalty_if_applicable
     - progress_jump_penalty_if_applicable
+    - |action_t - action_{t-1}|_1 * action_smoothness_weight
+    - max(0, forward_speed_mps - target_speed) * curvature_overspeed_weight
 ```
 
 ## Components
@@ -23,13 +25,15 @@ reward =
 | Component | Initial value/weight | Purpose | Literature/design basis | Risk/TODO |
 | --- | ---: | --- | --- | --- |
 | Progress reward | `progress_weight = 1.0` | Make forward course progress the main dense learning signal. | Gran Turismo Sport RL uses course progress as a dense proxy because raw lap time is too sparse for step-by-step learning. | Centreline progress may later need replacing or comparing with racing-line progress. |
-| Forward speed reward | `speed_weight = 0.02` | Encourage useful longitudinal speed without letting speed dominate progress. | Formula RL and TORCS-style rewards include longitudinal speed. | Too much speed reward can encourage crashes, wall-riding, or poor braking. |
+| Forward speed reward | `speed_weight = 0.05` | Encourage useful longitudinal speed without letting speed dominate progress. | Formula RL and TORCS-style rewards include longitudinal speed. | Too much speed reward can encourage crashes, wall-riding, or poor braking. |
 | Heading error penalty | `heading_error_weight = 0.2` | Discourage sideways, spinning, or backwards driving. | Formula RL uses alignment between car direction and track or racing-line direction. | May need tuning for controlled oversteer or drift-like behaviour. |
 | Lateral error penalty | `lateral_error_weight = 0.1` | Encourage stable track-following near the centreline. | Racing RL rewards commonly penalise distance from road centre or track axis. | The centreline is not always the fastest racing line, so this penalty may overconstrain the agent. |
-| Excessive lateral error/off-track penalty | `max_lateral_error_m = 8.0`, `off_track_penalty = 10.0` | Make likely off-track states visibly bad in reward logs. | Formula RL discusses out-of-track termination; GT Sport adds penalties for wall exploitation. | Needs replacing or strengthening with true road-boundary and collision signals. |
+| Excessive lateral error/off-track penalty | `max_lateral_error_m = 10.0`, `off_track_penalty = 10.0` | Make likely off-track states visibly bad in reward logs. | Formula RL discusses out-of-track termination; GT Sport adds penalties for wall exploitation. | Needs replacing or strengthening with true road-boundary and collision signals. |
 | Reverse progress penalty | `reverse_progress_penalty = 2.0` | Penalise meaningful movement against lap direction. | Formula RL discusses terminating backwards movement. | Termination is conservative for now; thresholding may be needed later. |
 | Stuck/no-progress penalty | `min_progress_delta_m = 0.05`, `stuck_step_penalty = 0.05` | Discourage stationary or barely moving behaviour before stuck termination. | Formula RL discusses slow-progress and max-step termination. | Needs tuning with the final simulator step rate and action repeat. |
 | Progress projection guard | `max_progress_delta_m = 50.0`, `progress_jump_penalty = 5.0` | Ignore one-frame centreline projection jumps that are too large to be real vehicle movement. | Defensive live-simulator guard. | Threshold may need tuning for other tracks or action repeat settings. |
+| Action smoothness penalty | `action_smoothness_weight = 0.1` | Penalise jerky steering/throttle changes (L1 norm of action delta). | Smoothness regularisation is common in robotics RL to reduce wear and improve real-world transfer. | Per-dimension weighting (heavier on steering than throttle) may be better. |
+| Curvature overspeed penalty | `curvature_overspeed_weight = 0.15`, target = `clamp(35 - 700 × curvature, 12, 35)` m/s | Penalise carrying excess speed into corners based on track curvature lookahead. | Racing-specific: penalise entering corners too fast to encourage braking. | Partially conflicts with speed reward — the two terms partially cancel on straights near the curvature threshold. |
 
 ## Design Rationale
 
@@ -57,7 +61,7 @@ BeamNG live positions are projected onto a closed centreline. Near complex track
 - [ ] Add wall-contact or impact penalty if available.
 - [ ] Tune lateral error penalty to avoid preventing out-in-out racing lines.
 - [ ] Compare centreline progress reward against racing-line progress reward if a racing line is later generated.
-- [ ] Log reward components during training.
+- [x] Log reward components during training — all components returned in `reward_info` per step.
 - [ ] Plot reward components against episode performance.
 - [ ] Add reward ablation experiments if time allows.
 
@@ -66,10 +70,10 @@ BeamNG live positions are projected onto a closed centreline. Near complex track
 | Constant | Initial value | Where used |
 | --- | ---: | --- |
 | `progress_weight` | `1.0` | Multiplies centreline progress delta in metres. |
-| `speed_weight` | `0.02` | Multiplies forward speed in metres per second. |
+| `speed_weight` | `0.05` | Multiplies forward speed in metres per second. |
 | `heading_error_weight` | `0.2` | Multiplies absolute heading error in radians. |
 | `lateral_error_weight` | `0.1` | Multiplies absolute signed lateral error in metres. |
-| `max_lateral_error_m` | `8.0` | Off-track termination and off-track penalty threshold. |
+| `max_lateral_error_m` | `10.0` | Off-track termination and off-track penalty threshold. |
 | `off_track_penalty` | `10.0` | Applied when lateral error exceeds `max_lateral_error_m`. |
 | `reverse_progress_penalty` | `2.0` | Applied when progress delta is negative after wrap-around handling. |
 | `min_progress_delta_m` | `0.05` | Threshold for no-progress/stuck detection. |
@@ -77,3 +81,8 @@ BeamNG live positions are projected onto a closed centreline. Near complex track
 | `stuck_steps_limit` | `100` | Terminates after repeated low-progress steps. |
 | `max_progress_delta_m` | `50.0` | Maximum allowed per-step progress delta after wrap handling. |
 | `progress_jump_penalty` | `5.0` | Applied when an impossible centreline projection jump is detected. |
+| `action_smoothness_weight` | `0.1` | Multiplies L1 norm of action delta `|action_t - action_{t-1}|` across both dimensions. |
+| `curvature_overspeed_weight` | `0.15` | Multiplies excess speed above the curvature-derived target. |
+| `curvature_target_speed_base` | `35.0` | Target speed in m/s on a straight (curvature ≈ 0). |
+| `curvature_target_speed_min` | `12.0` | Floor target speed in m/s for tight hairpins. |
+| `curvature_speed_scale` | `700.0` | Scales curvature → speed reduction: `target = base - scale × max_curvature_ahead`. |
