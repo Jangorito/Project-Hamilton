@@ -249,6 +249,17 @@ def _run_vehicle_model(config: dict[str, Any]) -> str | None:
     return car if car in CAR_RUN_SUFFIXES else None
 
 
+def _can_resume_with_vehicle(config: dict[str, Any], vehicle_model: str) -> tuple[bool, str]:
+    run_vehicle_model = _run_vehicle_model(config)
+    if run_vehicle_model == vehicle_model:
+        return True, ""
+    if run_vehicle_model is None and vehicle_model == "sbr":
+        return True, ""
+    if run_vehicle_model is None:
+        return False, "has no saved vehicle metadata"
+    return False, f"was created for {run_vehicle_model}"
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -339,15 +350,10 @@ def main() -> None:
         if not rm.exists(run_name):
             sys.exit(f"Run '{run_name}' not found. Use --fresh to create it.")
         existing_config = rm.load_config(run_name)
-        run_vehicle_model = _run_vehicle_model(existing_config)
-        if run_vehicle_model != vehicle_model:
-            if run_vehicle_model is None:
-                sys.exit(
-                    f"Run '{run_name}' has no saved vehicle metadata. "
-                    f"Start a fresh run for {vehicle_model} instead."
-                )
+        can_resume, reason = _can_resume_with_vehicle(existing_config, vehicle_model)
+        if not can_resume:
             sys.exit(
-                f"Run '{run_name}' was created for {run_vehicle_model}, "
+                f"Run '{run_name}' {reason}, "
                 f"but launcher selected {vehicle_model}. Start a fresh run "
                 "or select the matching vehicle."
             )
