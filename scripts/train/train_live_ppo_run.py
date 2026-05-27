@@ -335,6 +335,8 @@ def main() -> None:
         # Log the reward config key prominently so the terminal output is
         # self-documenting and easy to grep when comparing run logs.
         print(f"\nReward config  : {reward_key}")
+        print(f"Vehicle        : {vehicle_model}")
+        print(f"Speed factor   : {speed_factor if speed_factor is not None else 'default'}x")
         for field_name, value in vars(reward_config).items():
             print(f"  {field_name}: {value}")
 

@@ -691,6 +691,7 @@
       <div class="btn-group">
         <button class="btn btn-primary" id="launch-btn" onclick="launch()">Launch</button>
         <button class="btn btn-danger" id="stop-btn" onclick="stopTraining()">Stop Training</button>
+        <button class="btn btn-secondary" onclick="startStream()">Start Stream</button>
         <button class="btn btn-secondary" onclick="stopStream()">Stop Stream</button>
       </div>
     </div>
@@ -764,6 +765,7 @@ let isTraining = false;
 let toastTimer = null;
 let userTouchedCar = false;
 let userTouchedSpeed = false;
+let userTouchedReward = false;
 const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
 
@@ -808,6 +810,7 @@ function initRadioGroups() {
       if (group === 'mode') onModeChange(el.dataset.value);
       if (group === 'run_mode') onRunModeChange(el.dataset.value);
       if (group === 'car') userTouchedCar = true;
+      if (group === 'reward') userTouchedReward = true;
     });
   });
 }
@@ -925,7 +928,7 @@ async function pollStatus() {
     }
 
     document.getElementById('training-car-title').textContent = d.is_training
-      ? `Training: ${d.car_label || CAR_LABELS[d.car] || 'Selected car'}`
+      ? `Training: ${d.car_label || CAR_LABELS[d.car] || 'Selected car'} in ${d.speed_factor || 1}x speed`
       : 'No active training';
 
     // Progress bar
@@ -966,7 +969,7 @@ async function pollStatus() {
 
     // Restore speed factor and reward config from last saved session
     if (!isTraining && d.speed_factor != null && !userTouchedSpeed) setSpeedSliderFromValue(d.speed_factor);
-    if (!isTraining && d.reward_config != null) setRewardConfig(d.reward_config);
+    if (!isTraining && d.reward_config != null && !userTouchedReward) setRewardConfig(d.reward_config);
     if (!isTraining && d.car != null && !userTouchedCar) setCarSelection(d.car);
 
     // Damage meta
