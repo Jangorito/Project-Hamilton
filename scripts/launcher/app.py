@@ -73,6 +73,7 @@ _watch_proc: dict = {"proc": None, "log_file": None}
 
 # Guard: refuse to set max_damage below this to protect against fat-finger triggers
 _MIN_DAMAGE_THRESHOLD = 50.0
+_STEP_SUFFIX_RE = re.compile(r"_\d+(?:k|m)?steps$", re.IGNORECASE)
 
 app = Flask(__name__)
 rm = RunManager()
@@ -166,7 +167,7 @@ def _get_active_run_info() -> dict:
         return {
             "run_name": None,
             "current_steps": 0,
-            "total_steps": int(session.get("total_timesteps", 100_000)),
+            "total_steps": _safe_timesteps(session.get("total_timesteps"), 100_000),
         }
     # Prefer the live progress file (updated every rollout by StepProgressWriter).
     # Fall back to the latest checkpoint name when no live file exists.
@@ -179,10 +180,11 @@ def _get_active_run_info() -> dict:
             if match:
                 current_steps = int(match.group(1))
     config = rm.load_config(run_name)
-    total_steps = int(session.get(
+    configured_total = session.get(
         "total_timesteps",
         config.get("training", {}).get("total_timesteps", 100_000),
-    ))
+    )
+    total_steps = _safe_timesteps(configured_total, 100_000)
     return {"run_name": run_name, "current_steps": current_steps, "total_steps": total_steps}
 
 
@@ -205,6 +207,37 @@ def _load_session_config() -> dict:
 def _save_session_config(config: dict) -> None:
     SESSION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     SESSION_CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
+def _parse_timesteps(value, default: int = 100_000) -> int:
+    try:
+        timesteps = int(value if value is not None else default)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Timesteps must be a positive integer.") from exc
+    if timesteps < 1:
+        raise ValueError("Timesteps must be a positive integer.")
+    return timesteps
+
+
+def _safe_timesteps(value, default: int = 100_000) -> int:
+    try:
+        return _parse_timesteps(value, default)
+    except ValueError:
+        return default
+
+
+def _format_step_suffix(total_timesteps: int) -> str:
+    if total_timesteps % 1_000_000 == 0:
+        return f"{total_timesteps // 1_000_000}msteps"
+    if total_timesteps % 1_000 == 0:
+        return f"{total_timesteps // 1_000}ksteps"
+    return f"{total_timesteps}steps"
+
+
+def _ensure_step_suffix(run_name: str, total_timesteps: int) -> str:
+    base = _STEP_SUFFIX_RE.sub("", run_name.strip())
+    suffix = _format_step_suffix(total_timesteps)
+    return f"{base}_{suffix}" if base else suffix
 
 
 def _run_vehicle_model(run_name: str) -> str | None:
@@ -267,9 +300,10 @@ def _ensure_car_suffix(
     car: str,
     reward_config: str,
     speed_factor: int = 1,
+    total_timesteps: int | None = None,
 ) -> str:
     suffix = CAR_RUN_SUFFIXES[car]
-    base = run_name.strip() or f"{reward_config}_{suffix}"
+    base = _STEP_SUFFIX_RE.sub("", run_name.strip() or f"{reward_config}_{suffix}")
     tokens = base.lower().replace("-", "_").split("_")
     if suffix not in tokens:
         base = f"{base}_{suffix}"
@@ -277,6 +311,8 @@ def _ensure_car_suffix(
     speed_suffix = f"{speed_factor}x"
     if speed_factor > 1 and speed_suffix not in tokens:
         base = f"{base}_{speed_suffix}"
+    if total_timesteps is not None:
+        base = _ensure_step_suffix(base, total_timesteps)
     return base
 
 
@@ -417,7 +453,10 @@ def api_launch():
         }), 400
     run_name = str(data.get("run_name", "")).strip()
     fresh = bool(data.get("fresh", False))
-    timesteps = int(data.get("timesteps", 100_000))
+    try:
+        timesteps = _parse_timesteps(data.get("timesteps", 100_000))
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
     stream = bool(data.get("stream", mode == "training"))
     max_damage = float(data.get("max_damage", 500.0))
     try:
@@ -464,7 +503,7 @@ def api_launch():
         return jsonify({"ok": True, "message": "BeamNG launched standalone."})
 
     if fresh:
-        run_name = _ensure_car_suffix(run_name, car, reward_config, speed_factor)
+        run_name = _ensure_car_suffix(run_name, car, reward_config, speed_factor, timesteps)
     else:
         resume_name = run_name or rm.find_latest_run()
         if not resume_name:

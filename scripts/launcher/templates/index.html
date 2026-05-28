@@ -248,6 +248,25 @@
     gap: 12px;
   }
 
+  .steps-input-row {
+    position: relative;
+    margin-top: 8px;
+  }
+
+  .steps-input-row input {
+    padding-right: 54px;
+    font-family: var(--font-mono);
+  }
+
+  .steps-unit {
+    position: absolute;
+    right: 10px; top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: var(--muted);
+    pointer-events: none;
+  }
+
   input[type="range"] {
     flex: 1;
     -webkit-appearance: none;
@@ -698,6 +717,10 @@
             <div class="slider-time" id="steps-time">~7.5 hours</div>
           </div>
         </div>
+        <div class="steps-input-row">
+          <input type="number" class="input" id="steps-input" min="1" step="1000" value="100000">
+          <span class="steps-unit">steps</span>
+        </div>
       </div>
 
       <!-- Physics speed factor -->
@@ -889,6 +912,7 @@ let userTouchedReward = false;
 let runDetails = {};
 const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
+const DEFAULT_TIMESTEPS = 100000;
 
 const SPEED_FACTORS = [1, 2, 4, 8, 16, 32];
 const CAR_LABELS = {
@@ -908,6 +932,23 @@ function selectedSpeedFactor() {
 
 function stepsPerSecond() {
   return measuredStepsPerSecond ?? (STEPS_PER_SECOND_FALLBACK * selectedSpeedFactor());
+}
+
+function normalizeTimesteps(value) {
+  const timesteps = Number.parseInt(value, 10);
+  return Number.isFinite(timesteps) && timesteps > 0 ? timesteps : null;
+}
+
+function selectedTimesteps() {
+  return normalizeTimesteps(document.getElementById('steps-input').value)
+    ?? normalizeTimesteps(document.getElementById('steps-slider').value)
+    ?? DEFAULT_TIMESTEPS;
+}
+
+function formatStepSuffix(timesteps) {
+  if (timesteps % 1000000 === 0) return `${timesteps / 1000000}msteps`;
+  if (timesteps % 1000 === 0) return `${timesteps / 1000}ksteps`;
+  return `${timesteps}steps`;
 }
 
 // ── Init ─────────────────────────────────────────────────────
@@ -971,12 +1012,35 @@ function initRunMode() {
 // ── Slider ───────────────────────────────────────────────────
 function initSlider() {
   const slider = document.getElementById('steps-slider');
-  slider.addEventListener('input', updateSliderDisplay);
+  const input = document.getElementById('steps-input');
+  slider.addEventListener('input', () => {
+    input.value = slider.value;
+    updateSliderDisplay();
+    updateFreshNameSuggestion();
+  });
+  input.addEventListener('input', () => {
+    const val = normalizeTimesteps(input.value);
+    if (val !== null) {
+      const min = Number.parseInt(slider.min, 10);
+      const max = Number.parseInt(slider.max, 10);
+      slider.value = Math.min(max, Math.max(min, val));
+    }
+    updateSliderDisplay();
+    updateFreshNameSuggestion();
+  });
+  input.addEventListener('change', () => {
+    if (normalizeTimesteps(input.value) === null) {
+      input.value = DEFAULT_TIMESTEPS;
+      slider.value = DEFAULT_TIMESTEPS;
+      updateSliderDisplay();
+      updateFreshNameSuggestion();
+    }
+  });
   updateSliderDisplay();
 }
 
 function updateSliderDisplay() {
-  const val = parseInt(document.getElementById('steps-slider').value);
+  const val = selectedTimesteps();
   const hours = val / stepsPerSecond() / 3600;
   document.getElementById('steps-val').textContent  = val.toLocaleString();
   document.getElementById('steps-time').textContent = `~${hours.toFixed(1)} hours`;
@@ -1051,11 +1115,11 @@ function suggestedFreshRunName() {
   const suffix = CAR_RUN_SUFFIXES[selectedCar()] || selectedCar();
   const speed = selectedSpeedFactor();
   const speedSuffix = speed > 1 ? `_${speed}x` : '';
-  return `${selectedRewardConfig()}_${suffix}${speedSuffix}`;
+  return `${selectedRewardConfig()}_${suffix}${speedSuffix}_${formatStepSuffix(selectedTimesteps())}`;
 }
 
 function isAutoFreshRunName(value) {
-  return /^(v1|v2)_(subaru|etk)(_(2|4|8|16|32)x)?$/i.test(value.trim());
+  return /^(v1|v2)_(subaru|etk)(_(2|4|8|16|32)x)?(_\d+(k|m)?steps)?$/i.test(value.trim());
 }
 
 function updateFreshNameSuggestion() {
@@ -1246,7 +1310,7 @@ async function launch() {
   const runName = fresh
     ? document.getElementById('fresh-name').value.trim()
     : document.getElementById('resume-select').value;
-  const timesteps    = parseInt(document.getElementById('steps-slider').value);
+  const timesteps    = selectedTimesteps();
   const stream       = mode === 'training' || document.getElementById('stream-toggle').checked;
   const maxDamage    = parseFloat(document.getElementById('damage-input').value) || 500;
   const speedFactor  = SPEED_FACTORS[parseInt(document.getElementById('speed-slider').value)];
