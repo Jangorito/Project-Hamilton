@@ -14,10 +14,10 @@ with its own findings to discuss — not just optimisations bolted on.
 | **ETK** | B ✅ `v1_etk_2x` — 955.6 m, 165k steps | C ⬜ needs training |
 | **SBR4** | A ⬜ needs training | D ⬜ optional |
 
-- [ ] **Train Condition A** — run name `v1_subaru`: sbr + V1 + det50ms 2× + 165k steps, fresh from scratch
+- [x] **Train Condition A** — run name `v1_subaru`: sbr + V1 + det50ms 2× + 278k steps, fresh from scratch
 - [ ] **Train Condition C** — run name `v1_etk_v2`: etkc + V2 + det50ms 2× + 165k steps, fresh from scratch
 - [ ] Run `eval_checkpoints.py` on all three completed conditions (B, A, C) to find best checkpoint per run — the final checkpoint is not necessarily peak performance
-- [ ] Collect **BeamNG CPU AI baseline** lap time on Hirochi Raceway (lap time, sector times, average speed) — used as the performance ceiling when reporting results ("agent achieved X% of AI average speed")
+- [x] Collect **BeamNG CPU AI baseline** lap time on Hirochi Raceway (lap time, sector times, average speed) — used as the performance ceiling when reporting results ("agent achieved X% of AI average speed")
 
 ---
 
@@ -103,7 +103,7 @@ with its own findings to discuss — not just optimisations bolted on.
 
 - [x] **`watch_model.py` vehicle model fix** — reads `vehicle_model` from `run_config.json` ✅
 - [x] **Progress jump bug (3D nearest-point projection)** — fixed. Root cause: Hirochi Raceway has an overpass where segment ~132 (prog 264m, Z=25.1m) and segment ~631 (prog 1262m, Z=31.8m) are only 0.77m apart in XY but 6.75m apart in Z. XY-only disambiguation picked the wrong segment, causing the observed ~998m progress jump. Fix: `TrackCentreline.query()` now includes Z in the disambiguation distance while keeping arc-length, heading, and lateral error in XY. Verified: lower road resolves to 264m, upper road to 1262m, both correctly.
-- [ ] **`checkpoints_eval.csv` for `v1_etk_2x`** — run `eval_checkpoints.py` now so the best checkpoint is known; the 160k final may not be peak performance
+- [x] **`checkpoints_eval.csv` for `v1_etk_2x`** — run `eval_checkpoints.py` now so the best checkpoint is known; the 160k final may not be peak performance
 - [ ] **Log racing line deviation in all rollout CSVs** — once the AI raceline is extracted, log lateral distance from the AI line in every rollout CSV for all conditions retrospectively (not just the raceline-reward condition) so you can compare how close each agent got to the ideal line without retraining
 - [ ] **`launcher_session.json` keys for new options** — ensure `spawn_mode`, `raceline_json_path`, and `bc_weights` are settable from the Flask launcher UI
 
