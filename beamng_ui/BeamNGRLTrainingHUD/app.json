@@ -1,0 +1,24 @@
+{
+  "domElement": "<beamng-rl-training-hud></beamng-rl-training-hud>",
+  "name": "Project Hamilton Training HUD",
+  "types": [
+    "ui.apps.categories.debug",
+    "ui.apps.categories.vehicle_info"
+  ],
+  "description": "Live reinforcement-learning training telemetry for Project Hamilton.",
+  "css": {
+    "left": "16px",
+    "top": "16px",
+    "width": "430px",
+    "height": "330px",
+    "min-width": "360px",
+    "min-height": "280px"
+  },
+  "author": "Project Hamilton",
+  "version": "0.1",
+  "directive": "beamngRlTrainingHud",
+  "appName": "beamngRlTrainingHud",
+  "category": "Telemetry",
+  "isAuxiliary": false,
+  "interactive": "no"
+}
