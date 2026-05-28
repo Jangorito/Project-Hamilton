@@ -129,6 +129,7 @@ CAR_RUN_SUFFIXES = {
     "sbr": "subaru",
     "etkc": "etk",
 }
+SPAWN_MODES = {"bootstrap", "random_checkpoint"}
 _STEP_SUFFIX_RE = re.compile(r"_\d+(?:k|m)?steps$", re.IGNORECASE)
 
 
@@ -312,6 +313,7 @@ def _build_run_config(
     vehicle_model: str,
     speed_factor: int | None,
     timing_profile: str,
+    spawn_mode: str,
 ) -> dict[str, Any]:
     # Include config_key so run_config.json and run_info.md are self-documenting:
     # any reader can immediately see which experiment arm produced these results.
@@ -327,6 +329,7 @@ def _build_run_config(
             "vehicle_model": vehicle_model,
             "speed_factor": speed_factor,
             "timing_profile": timing_profile,
+            "spawn_mode": spawn_mode,
         },
         "reward":  {"config_key": reward_key, **vars(reward_config)},
     }
@@ -338,6 +341,7 @@ def _ensure_car_suffix(
     reward_key: str,
     speed_factor: int | None = None,
     total_timesteps: int | None = None,
+    spawn_mode: str = "bootstrap",
 ) -> str:
     suffix = CAR_RUN_SUFFIXES[vehicle_model]
     base = _STEP_SUFFIX_RE.sub("", run_name.strip() or f"{reward_key}_{suffix}")
@@ -349,6 +353,9 @@ def _ensure_car_suffix(
     speed_suffix = f"{speed_value}x"
     if speed_value > 1 and speed_suffix not in tokens:
         base = f"{base}_{speed_suffix}"
+        tokens = base.lower().replace("-", "_").split("_")
+    if spawn_mode == "random_checkpoint" and "respawn" not in tokens:
+        base = f"{base}_respawn"
     if total_timesteps is not None:
         base = _ensure_step_suffix(base, total_timesteps)
     return base
@@ -413,6 +420,11 @@ def main() -> None:
     parser.add_argument("--reward-config", metavar="KEY", default=None,
                         help="Reward config key from REWARD_CONFIGS (v1 or v2). "
                              "Default: v1. Can also be set via launcher_session.json.")
+    parser.add_argument("--spawn-mode", metavar="MODE", default=None,
+                        choices=list(SPAWN_MODES),
+                        help="Spawn mode: 'bootstrap' (fixed start marker) or "
+                             "'random_checkpoint' (uniform random position each reset). "
+                             "Default: bootstrap. Can also be set via launcher_session.json.")
     args = parser.parse_args()
 
     # CLI args take precedence over launcher session config.
@@ -444,17 +456,27 @@ def main() -> None:
         )
     reward_config = REWARD_CONFIGS[reward_key]
 
-    # Auto-generate a run name that embeds the car model and reward config key
-    # so TensorBoard log directories and checkpoint folders are self-labelling.
-    # e.g. --reward-config v1 on etkc -> "etkc_v1", v2 -> "etkc_v2".
-    # A manual --run-name or launcher session name always takes precedence.
-    run_name_hint = args.run_name or session.get("run_name", "") or f"{reward_key}_{CAR_RUN_SUFFIXES[vehicle_model]}"
+    # Resolve spawn mode: CLI > launcher session > default "bootstrap".
+    spawn_mode = args.spawn_mode or str(session.get("spawn_mode", "bootstrap")).strip().lower()
+    if spawn_mode not in SPAWN_MODES:
+        sys.exit(
+            f"Error: unknown spawn_mode {spawn_mode!r}. "
+            f"Valid values: {sorted(SPAWN_MODES)}"
+        )
+
+    # Auto-generate a run name that embeds car, reward, and spawn mode so
+    # TensorBoard directories are self-labelling.  A manual --run-name or
+    # launcher session name always takes precedence.
+    _default_hint_parts = [reward_key, CAR_RUN_SUFFIXES[vehicle_model]]
+    if spawn_mode == "random_checkpoint":
+        _default_hint_parts.append("respawn")
+    run_name_hint = args.run_name or session.get("run_name", "") or "_".join(_default_hint_parts)
 
     if session:
         sf_label = f"{speed_factor}x" if speed_factor is not None else "default"
         print(f"Launcher config: car={vehicle_model}, steps={total_timesteps}, "
               f"max_damage={max_damage}, fresh={fresh}, speed_factor={sf_label}, "
-              f"reward_config={reward_key}")
+              f"reward_config={reward_key}, spawn_mode={spawn_mode}")
 
     if not CENTRELINE_PATH.is_file():
         raise FileNotFoundError(f"Centreline JSON not found: {CENTRELINE_PATH}")
@@ -475,6 +497,7 @@ def main() -> None:
             reward_key,
             speed_factor,
             total_timesteps,
+            spawn_mode,
         )
         if rm.exists(run_name):
             sys.exit(
@@ -492,6 +515,7 @@ def main() -> None:
                 vehicle_model=vehicle_model,
                 speed_factor=speed_factor,
                 timing_profile=timing_profile,
+                spawn_mode=spawn_mode,
             ),
         )
         print(f"Created run: {run_name}")
@@ -537,6 +561,7 @@ def main() -> None:
         print(f"Vehicle        : {vehicle_model}")
         print(f"Speed factor   : {speed_factor if speed_factor is not None else 'default'}x")
         print(f"Timing profile : {timing_profile}")
+        print(f"Spawn mode     : {spawn_mode}")
         for field_name, value in vars(reward_config).items():
             print(f"  {field_name}: {value}")
 
@@ -544,7 +569,7 @@ def main() -> None:
             CENTRELINE_PATH,
             use_mock=False,
             launch_beamng=True,
-            live_spawn_mode="bootstrap",
+            live_spawn_mode=spawn_mode,
             vehicle_id="ego_vehicle",
             vehicle_model=vehicle_model,
             reward_config=reward_config,

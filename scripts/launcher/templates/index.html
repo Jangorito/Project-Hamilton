@@ -666,6 +666,29 @@
         </div>
       </div>
 
+      <!-- Spawn Mode -->
+      <div class="panel-section" id="spawn-section">
+        <div class="section-label">Spawn Mode</div>
+        <div class="radio-group" id="spawn-group">
+          <label class="radio-option selected" data-group="spawn" data-value="bootstrap">
+            <input type="radio" name="spawn" value="bootstrap" checked>
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">Fixed Start</div>
+              <div class="radio-sub">Bootstrap pose · known-good start marker</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="spawn" data-value="random_checkpoint">
+            <input type="radio" name="spawn" value="random_checkpoint">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">Random Checkpoint</div>
+              <div class="radio-sub">Sample spawn uniformly along centreline each reset</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
       <!-- Mode -->
       <div class="panel-section">
         <div class="section-label">Mode</div>
@@ -909,6 +932,7 @@ let toastTimer = null;
 let userTouchedCar = false;
 let userTouchedSpeed = false;
 let userTouchedReward = false;
+let userTouchedSpawn = false;
 let runDetails = {};
 const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
@@ -984,12 +1008,16 @@ function initRadioGroups() {
         userTouchedReward = true;
         updateFreshNameSuggestion();
       }
+      if (group === 'spawn') {
+        userTouchedSpawn = true;
+        updateFreshNameSuggestion();
+      }
     });
   });
 }
 
 function onModeChange(mode) {
-  const trainingOnly = ['reward-section', 'run-section', 'steps-section', 'speed-section', 'stream-section'];
+  const trainingOnly = ['reward-section', 'spawn-section', 'run-section', 'steps-section', 'speed-section', 'stream-section'];
   trainingOnly.forEach(id => {
     document.getElementById(id).style.display =
       (mode === 'training') ? '' : 'none';
@@ -1098,6 +1126,18 @@ function selectedRewardConfig() {
   return document.querySelector('input[name="reward"]:checked').value;
 }
 
+function selectedSpawnMode() {
+  return document.querySelector('input[name="spawn"]:checked').value;
+}
+
+function setSpawnMode(key) {
+  document.querySelectorAll('.radio-option[data-group="spawn"]').forEach(el => {
+    const match = el.dataset.value === key;
+    el.classList.toggle('selected', match);
+    el.querySelector('input[type="radio"]').checked = match;
+  });
+}
+
 function selectedRunMode() {
   return document.querySelector('input[name="run_mode"]:checked').value;
 }
@@ -1115,11 +1155,12 @@ function suggestedFreshRunName() {
   const suffix = CAR_RUN_SUFFIXES[selectedCar()] || selectedCar();
   const speed = selectedSpeedFactor();
   const speedSuffix = speed > 1 ? `_${speed}x` : '';
-  return `${selectedRewardConfig()}_${suffix}${speedSuffix}_${formatStepSuffix(selectedTimesteps())}`;
+  const spawnSuffix = selectedSpawnMode() === 'random_checkpoint' ? '_respawn' : '';
+  return `${selectedRewardConfig()}_${suffix}${speedSuffix}${spawnSuffix}_${formatStepSuffix(selectedTimesteps())}`;
 }
 
 function isAutoFreshRunName(value) {
-  return /^(v1|v2)_(subaru|etk)(_(2|4|8|16|32)x)?(_\d+(k|m)?steps)?$/i.test(value.trim());
+  return /^(v1|v2)_(subaru|etk)(_(2|4|8|16|32)x)?(_respawn)?(_\d+(k|m)?steps)?$/i.test(value.trim());
 }
 
 function updateFreshNameSuggestion() {
@@ -1256,9 +1297,10 @@ async function pollStatus() {
       stopBtn.disabled = false;
     }
 
-    // Restore speed factor and reward config from last saved session
+    // Restore speed factor, reward config, spawn mode from last saved session
     if (!isTraining && d.speed_factor != null && !userTouchedSpeed) setSpeedSliderFromValue(d.speed_factor);
     if (!isTraining && d.reward_config != null && !userTouchedReward) setRewardConfig(d.reward_config);
+    if (!isTraining && d.spawn_mode != null && !userTouchedSpawn) setSpawnMode(d.spawn_mode);
     if (!isTraining && d.car != null && !userTouchedCar) setCarSelection(d.car);
 
     // Damage meta
@@ -1315,6 +1357,7 @@ async function launch() {
   const maxDamage    = parseFloat(document.getElementById('damage-input').value) || 500;
   const speedFactor  = SPEED_FACTORS[parseInt(document.getElementById('speed-slider').value)];
   const rewardConfig = document.querySelector('input[name="reward"]:checked').value;
+  const spawnMode    = selectedSpawnMode();
   const debug        = debugMode();
 
   const btn = document.getElementById('launch-btn');
@@ -1325,7 +1368,7 @@ async function launch() {
     const r = await fetch('/api/launch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig, debug_mode: debug }),
+      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig, spawn_mode: spawnMode, debug_mode: debug }),
     });
     const d = await r.json();
     toast(d.message, d.ok ? 'success' : 'error');
