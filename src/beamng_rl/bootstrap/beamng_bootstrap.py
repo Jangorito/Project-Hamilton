@@ -3,8 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Tuple
+
+# Allow running as a script directly (python bootstrap/beamng_bootstrap.py)
+# without setting PYTHONPATH — module-style runs (python -m beamng_rl.bootstrap...)
+# don't need this.
+_src = Path(__file__).resolve().parents[3]
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
 
 from beamngpy import BeamNGpy, set_up_simple_logging
 
@@ -27,6 +35,8 @@ from beamng_rl.bootstrap.beamng_setup import (
 )
 from beamng_rl.bootstrap.graphics_settings import DEFAULT_LOW_GRAPHICS_SETTINGS_FILE
 from beamng_rl.track.geometry import resample_polyline
+from beamng_rl.track.physics_raceline import compute_track_boundaries
+from beamng_rl.track.query_utils import TrackCentreline
 from beamng_rl.track.raceline_loader import derive_race_path_from_files
 from beamng_rl.visualisation.debug_draw_path import DebugPathDrawer
 
@@ -159,6 +169,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Resample the derived path to uniform spacing in metres before drawing/exporting. "
              "Set to 0 or a negative value to disable resampling.",
     )
+    parser.add_argument(
+        "--no-raceline",
+        action="store_true",
+        help="Skip drawing the physics racing line even if physics_raceline.json exists.",
+    )
+    parser.add_argument(
+        "--no-limits",
+        action="store_true",
+        help="Skip drawing left/right track-limit boundary lines.",
+    )
 
     return parser
 
@@ -277,14 +297,78 @@ def main() -> None:
 
             print(f"Drawing {len(path_to_draw)} path points in-sim...")
             drawer = DebugPathDrawer(bng)
+
+            # Centreline — cyan
             drawer.draw_path(
                 path_to_draw,
                 sphere_every=args.sphere_every,
                 label_every=args.label_every,
+                line_color=(0.1, 0.8, 1.0, 1.0),
+                sphere_color=(1.0, 0.45, 0.1, 1.0),
                 cling=False,
                 offset=0.5,
             )
-            print("Path drawn.")
+            print("Centreline drawn.")
+
+            # Track limits — left boundary (red) and right boundary (green)
+            if not args.no_limits:
+                spacing_label = str(args.resample_spacing).replace(".", "_")
+                resampled_json = track_data_dir / f"centreline_resampled_{spacing_label}m.json"
+                # Prefer the just-written resampled file; fall back to the default 2_0m one
+                if not resampled_json.exists():
+                    resampled_json = track_data_dir / "centreline_resampled_2_0m.json"
+                if resampled_json.exists():
+                    cl = TrackCentreline.from_json(resampled_json)
+                    _left, _right, _hw, _normals = compute_track_boundaries(
+                        cl, track_data_dir / ITEMS_FILE_NAME, HIGHLIGHT_IDS
+                    )
+                    left_pts = [(float(p[0]), float(p[1]), float(p[2])) for p in _left]
+                    right_pts = [(float(p[0]), float(p[1]), float(p[2])) for p in _right]
+                    # Close the loops
+                    left_pts.append(left_pts[0])
+                    right_pts.append(right_pts[0])
+                    drawer.draw_path(
+                        left_pts,
+                        line_color=(1.0, 0.15, 0.15, 1.0),
+                        sphere_every=0,
+                        start_end_markers=False,
+                        cling=False,
+                        offset=0.5,
+                    )
+                    drawer.draw_path(
+                        right_pts,
+                        line_color=(0.15, 1.0, 0.15, 1.0),
+                        sphere_every=0,
+                        start_end_markers=False,
+                        cling=False,
+                        offset=0.5,
+                    )
+                    print("Track limits drawn (red=left, green=right).")
+                else:
+                    print(f"Track limits: skipped (resampled centreline not found at {resampled_json}).")
+
+            # Physics racing line — gold/yellow
+            if not args.no_raceline:
+                raceline_json = track_data_dir / "physics_raceline.json"
+                if raceline_json.exists():
+                    rl_data = __import__("json").loads(raceline_json.read_text(encoding="utf-8"))
+                    rl_pts = [
+                        (float(p["x"]), float(p["y"]), float(p["z"]))
+                        for p in rl_data["points"]
+                    ]
+                    rl_pts.append(rl_pts[0])  # close the loop
+                    drawer.draw_path(
+                        rl_pts,
+                        line_color=(1.0, 0.85, 0.0, 1.0),
+                        sphere_color=(1.0, 0.85, 0.0, 1.0),
+                        sphere_every=args.sphere_every,
+                        start_end_markers=False,
+                        cling=False,
+                        offset=0.5,
+                    )
+                    print("Physics racing line drawn (yellow).")
+                else:
+                    print(f"Racing line: skipped ({raceline_json} not found).")
 
         input("Press Enter to exit...")
 
