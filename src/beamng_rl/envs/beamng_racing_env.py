@@ -218,9 +218,9 @@ class BeamNGRacingEnv(gym.Env):
         super().__init__()
 
         live_spawn_mode_value = str(live_spawn_mode)
-        if live_spawn_mode_value not in ("bootstrap", "centreline"):
+        if live_spawn_mode_value not in ("bootstrap", "centreline", "random_checkpoint"):
             raise ValueError(
-                "live_spawn_mode must be one of 'bootstrap' or 'centreline', "
+                "live_spawn_mode must be one of 'bootstrap', 'centreline', or 'random_checkpoint', "
                 f"got {live_spawn_mode!r}"
             )
 
@@ -1301,10 +1301,39 @@ class BeamNGRacingEnv(gym.Env):
                 tuple(float(value) for value in rot_quat),
             )
 
+        if self.live_spawn_mode == "random_checkpoint":
+            # Sample a spawn point uniformly along the full lap at each reset.
+            # Uses self.np_random (seeded by Gymnasium's reset()) for reproducibility.
+            random_progress_m = float(
+                self.np_random.uniform(0.0, float(self.track.total_lap_length))
+            )
+            centre_point = np.asarray(
+                self.track.point_at_progress(random_progress_m),
+                dtype=float,
+            ).reshape(-1)
+            if centre_point.shape[0] < 3:
+                centre_point = np.asarray(
+                    [centre_point[0], centre_point[1], 0.0],
+                    dtype=float,
+                )
+            base_query = self.track.query(centre_point[:3])
+            tangent_xy = np.asarray(base_query.track_tangent_xy, dtype=float)
+            left_normal_xy = np.asarray([-tangent_xy[1], tangent_xy[0]], dtype=float)
+            position_xyz = centre_point[:3].copy()
+            position_xyz[:2] += left_normal_xy * self.live_spawn_lateral_offset_m
+            position_xyz[2] += self.live_spawn_z_offset_m
+            heading_rad = float(base_query.track_heading_rad)
+            half_yaw = 0.5 * heading_rad
+            rot_quat = (0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+            return (
+                tuple(float(v) for v in position_xyz[:3]),
+                tuple(float(v) for v in rot_quat),
+            )
+
         # Constructor validation should make this unreachable, but keeping this
         # branch gives a clear error if the attribute is changed at runtime.
         raise ValueError(
-            "live_spawn_mode must be one of 'bootstrap' or 'centreline', "
+            "live_spawn_mode must be one of 'bootstrap', 'centreline', or 'random_checkpoint', "
             f"got {self.live_spawn_mode!r}"
         )
 
