@@ -1,4 +1,4 @@
-"""Evaluate all saved checkpoints for a run and find the best one.
+"""Evaluate saved checkpoints and final model for a run and find the best one.
 
 Run this after a training session to compare checkpoint performance and
 identify which model to visualise with watch_model.py.
@@ -98,13 +98,62 @@ def _run_timing_profile(env_cfg: dict, speed_factor: int | None) -> str:
     return "det50ms" if (speed_factor or 1) > 1 else "legacy_60hz"
 
 
+def _parse_int(value: object) -> int | None:
+    try:
+        return int(str(value).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _actual_timestep_from_run_info(run_name: str, rm: RunManager) -> int | None:
+    info_path = rm.run_dir(run_name) / "run_info.md"
+    if not info_path.exists():
+        return None
+    try:
+        lines = info_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if "**actual_timesteps**" not in line:
+            continue
+        _, _, value = line.partition(":")
+        return _parse_int(value)
+    return None
+
+
+def _configured_timestep(run_cfg: dict) -> int | None:
+    training = run_cfg.get("training", {})
+    if not isinstance(training, dict):
+        return None
+    return _parse_int(training.get("total_timesteps"))
+
+
+def _models_to_evaluate(
+    run_name: str,
+    rm: RunManager,
+    run_cfg: dict,
+) -> list[tuple[Path, int]]:
+    models = [(ckpt, _parse_timestep(ckpt)) for ckpt in rm.find_all_checkpoints(run_name)]
+
+    final_model = rm.run_dir(run_name) / "model_final.zip"
+    if final_model.is_file():
+        final_timestep = (
+            _actual_timestep_from_run_info(run_name, rm)
+            or _configured_timestep(run_cfg)
+            or _parse_timestep(final_model)
+        )
+        models.append((final_model, final_timestep))
+
+    return models
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate BeamNG PPO checkpoints.")
+    parser = argparse.ArgumentParser(description="Evaluate BeamNG PPO model files.")
     parser.add_argument("run_name", nargs="?", metavar="RUN",
                         help="Run name to evaluate.")
     parser.add_argument("--run", metavar="NAME", help="Run name to evaluate.")
     parser.add_argument("--steps", type=int, default=DEFAULT_EVAL_STEPS,
-                        help="Max rollout steps per checkpoint.")
+                        help="Max rollout steps per model.")
     args = parser.parse_args()
 
     rm = RunManager()
@@ -118,14 +167,14 @@ def main() -> None:
     if not rm.exists(run_name):
         sys.exit(f"Run '{run_name}' not found.")
 
-    checkpoints = rm.find_all_checkpoints(run_name)
-    if not checkpoints:
-        sys.exit(f"No checkpoints found in run '{run_name}'.")
+    run_cfg = rm.load_config(run_name)
+    models = _models_to_evaluate(run_name, rm, run_cfg)
+    if not models:
+        sys.exit(f"No checkpoints or final model found in run '{run_name}'.")
 
     out_csv = rm.log_dir(run_name) / "checkpoints_eval.csv"
     rm.log_dir(run_name).mkdir(parents=True, exist_ok=True)
 
-    run_cfg = rm.load_config(run_name)
     env_cfg_raw = run_cfg.get("env", {})
     env_cfg = env_cfg_raw if isinstance(env_cfg_raw, dict) else {}
 
@@ -146,7 +195,7 @@ def main() -> None:
     print(f"Vehicle  : {vehicle_model}")
     print(f"Timing   : {timing_profile}")
     print(f"Speed    : {speed_factor if speed_factor is not None else 'default'}x")
-    print(f"Found    : {len(checkpoints)} checkpoints")
+    print(f"Found    : {len(models)} model files")
     print(f"Steps    : {args.steps} per rollout")
     print("Launching BeamNG...")
 
@@ -174,14 +223,13 @@ def main() -> None:
             wall_bash_steps_limit=wall_bash_steps_limit,
         )
 
-        for ckpt in checkpoints:
-            timestep = _parse_timestep(ckpt)
-            print(f"\nEvaluating {ckpt.name} (t={timestep})...")
-            model = PPO.load(str(ckpt))
+        for model_path, timestep in models:
+            print(f"\nEvaluating {model_path.name} (t={timestep})...")
+            model = PPO.load(str(model_path))
             progress_m, reason, jumps = _run_rollout(env, model, args.steps)
             print(f"  progress={progress_m:.1f}m  reason={reason}  jumps={jumps}")
             results.append({
-                "checkpoint": str(ckpt),
+                "checkpoint": str(model_path),
                 "timestep": timestep,
                 "progress_m": progress_m,
                 "termination_reason": reason,
@@ -195,7 +243,7 @@ def main() -> None:
 
         best = max(results, key=lambda r: r["progress_m"])
         print(f"\n=== Results saved to {out_csv} ===")
-        print("\nBest checkpoint:")
+        print("\nBest model:")
         print(f"  {Path(best['checkpoint']).name}")
         print(f"  progress={best['progress_m']:.1f} m  at timestep={best['timestep']}")
         print("\nTo visualise:")
