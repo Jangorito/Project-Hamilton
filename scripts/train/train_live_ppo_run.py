@@ -54,8 +54,14 @@ except ImportError as exc:
     ) from exc
 
 from beamng_rl.envs.beamng_racing_env import REWARD_CONFIGS, BeamNGRacingEnv, RewardConfig
-from beamng_rl.training.callbacks import RewardComponentLogger, StepProgressWriter, StopSignalCallback
+from beamng_rl.training.callbacks import (
+    BeamNGTrainingHudCallback,
+    RewardComponentLogger,
+    StepProgressWriter,
+    StopSignalCallback,
+)
 from beamng_rl.training.run_manager import RunManager, prompt_run_name
+from beamng_rl.visualisation.beamng_training_hud import BeamNGTrainingHud
 
 # ---------------------------------------------------------------------------
 # Launcher session config — written by scripts/launcher/app.py before launch
@@ -128,6 +134,10 @@ CSV_FIELDS = [
 CAR_RUN_SUFFIXES = {
     "sbr": "subaru",
     "etkc": "etk",
+}
+CAR_LABELS = {
+    "sbr": "SBR4 Track",
+    "etkc": "ETK K-Series Trackday A",
 }
 _STEP_SUFFIX_RE = re.compile(r"_\d+(?:k|m)?steps$", re.IGNORECASE)
 
@@ -312,6 +322,7 @@ def _build_run_config(
     vehicle_model: str,
     speed_factor: int | None,
     timing_profile: str,
+    beamng_training_hud: bool,
 ) -> dict[str, Any]:
     # Include config_key so run_config.json and run_info.md are self-documenting:
     # any reader can immediately see which experiment arm produced these results.
@@ -327,6 +338,7 @@ def _build_run_config(
             "vehicle_model": vehicle_model,
             "speed_factor": speed_factor,
             "timing_profile": timing_profile,
+            "beamng_training_hud": beamng_training_hud,
         },
         "reward":  {"config_key": reward_key, **vars(reward_config)},
     }
@@ -434,6 +446,7 @@ def main() -> None:
     if timing_profile is not None and timing_profile not in ("legacy_60hz", "det50ms"):
         sys.exit("Error: timing_profile must be 'legacy_60hz' or 'det50ms'.")
     debug_mode = bool(session.get("debug_mode", False))
+    beamng_hud_enabled = bool(session.get("beamng_hud", True))
 
     # Resolve reward config key: CLI > launcher session > default "v1".
     reward_key = args.reward_config or str(session.get("reward_config", "v1"))
@@ -492,6 +505,7 @@ def main() -> None:
                 vehicle_model=vehicle_model,
                 speed_factor=speed_factor,
                 timing_profile=timing_profile,
+                beamng_training_hud=beamng_hud_enabled,
             ),
         )
         print(f"Created run: {run_name}")
@@ -530,6 +544,7 @@ def main() -> None:
     rollout_path   = log_dir / "rollout_final.csv"
 
     env: BeamNGRacingEnv | None = None
+    training_hud: BeamNGTrainingHud | None = None
     try:
         # Log the reward config key prominently so the terminal output is
         # self-documenting and easy to grep when comparing run logs.
@@ -537,6 +552,7 @@ def main() -> None:
         print(f"Vehicle        : {vehicle_model}")
         print(f"Speed factor   : {speed_factor if speed_factor is not None else 'default'}x")
         print(f"Timing profile : {timing_profile}")
+        print(f"BeamNG HUD     : {'enabled' if beamng_hud_enabled else 'disabled'}")
         for field_name, value in vars(reward_config).items():
             print(f"  {field_name}: {value}")
 
@@ -552,6 +568,13 @@ def main() -> None:
             timing_profile=timing_profile,
             **env_config,
         )
+
+        if beamng_hud_enabled:
+            training_hud = BeamNGTrainingHud(env.beamng)
+            hud_path = training_hud.install()
+            if hud_path is not None:
+                print(f"  BeamNG HUD app: {hud_path}")
+            training_hud.show_layout()
 
         monitored_env = Monitor(env)
 
@@ -578,16 +601,33 @@ def main() -> None:
         print(f"  TensorBoard : tensorboard --logdir {log_dir.parent}")
         print(f"  Checkpoints : {checkpoint_dir}")
 
+        callbacks = [
+            checkpoint_cb,
+            RewardComponentLogger(),
+            StepProgressWriter(_PROGRESS_FILE),
+        ]
+        if training_hud is not None and training_hud.enabled:
+            callbacks.append(
+                BeamNGTrainingHudCallback(
+                    hud=training_hud,
+                    total_timesteps=total_timesteps,
+                    run_name=run_name,
+                    vehicle_model=vehicle_model,
+                    vehicle_label=CAR_LABELS.get(vehicle_model, vehicle_model),
+                    reward_config=reward_key,
+                    speed_factor=speed_factor,
+                    timing_profile=timing_profile or "unknown",
+                    max_episode_steps=int(env.max_episode_steps),
+                    full_lap_m=float(getattr(env.track, "total_lap_length", 2158.0)),
+                )
+            )
+        callbacks.append(StopSignalCallback(_STOP_SIGNAL_FILE))
+
         _PROGRESS_FILE.unlink(missing_ok=True)
         _STOP_SIGNAL_FILE.unlink(missing_ok=True)
         model.learn(
             total_timesteps=total_timesteps,
-            callback=[
-                checkpoint_cb,
-                RewardComponentLogger(),
-                StepProgressWriter(_PROGRESS_FILE),
-                StopSignalCallback(_STOP_SIGNAL_FILE),
-            ],
+            callback=callbacks,
         )
         actual_timesteps = int(getattr(model, "num_timesteps", total_timesteps))
         if actual_timesteps < total_timesteps:
@@ -611,6 +651,8 @@ def main() -> None:
                     _save_session_config(session)
         _PROGRESS_FILE.unlink(missing_ok=True)
         _STOP_SIGNAL_FILE.unlink(missing_ok=True)
+        if training_hud is not None and training_hud.enabled:
+            training_hud.send_status("saving", active=False)
 
         model_path = rm.run_dir(run_name) / "model_final.zip"
         model.save(str(model_path))
@@ -645,6 +687,8 @@ def main() -> None:
         print("  - No other BeamNG process running (port 25252)")
         raise
     finally:
+        if training_hud is not None and training_hud.enabled:
+            training_hud.send_status("closed", active=False)
         if env is not None:
             env.close()
 
