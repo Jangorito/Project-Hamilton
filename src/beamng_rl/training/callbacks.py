@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+import time
+from collections import deque
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -141,3 +144,193 @@ class StepProgressWriter(BaseCallback):
             self._path.write_text(str(self.num_timesteps), encoding="utf-8")
         except OSError:
             pass
+
+
+class BeamNGTrainingHudCallback(BaseCallback):
+    """Push live PPO training metrics into the BeamNG UI training HUD."""
+
+    def __init__(
+        self,
+        *,
+        hud: Any,
+        total_timesteps: int,
+        run_name: str,
+        vehicle_model: str,
+        vehicle_label: str,
+        reward_config: str,
+        speed_factor: int | None,
+        timing_profile: str,
+        max_episode_steps: int,
+        full_lap_m: float,
+        update_every_steps: int = 4,
+        verbose: int = 0,
+    ) -> None:
+        super().__init__(verbose)
+        self._hud = hud
+        self._total_timesteps = int(total_timesteps)
+        self._run_name = run_name
+        self._vehicle_model = vehicle_model
+        self._vehicle_label = vehicle_label
+        self._reward_config = reward_config
+        self._speed_factor = int(speed_factor or 1)
+        self._timing_profile = timing_profile
+        self._max_episode_steps = int(max_episode_steps)
+        self._full_lap_m = max(1.0, float(full_lap_m))
+        self._update_every_steps = max(1, int(update_every_steps))
+        self._started_at = 0.0
+        self._last_sent_step = -1
+        self._episodes_completed = 0
+        self._terminations_total = 0
+        self._termination_counts: dict[str, int] = defaultdict(int)
+        self._latest_termination = "none"
+        self._best_episode_progress_m = 0.0
+        self._progress_jumps = 0
+        self._reward_window: deque[float] = deque(maxlen=128)
+
+    def _on_training_start(self) -> None:
+        self._started_at = time.monotonic()
+        show_layout = getattr(self._hud, "show_layout", None)
+        if callable(show_layout):
+            show_layout()
+
+    def _on_step(self) -> bool:
+        infos: list[dict[str, Any]] = self.locals.get("infos", [])
+        if not infos:
+            return True
+
+        rewards = list(self.locals.get("rewards", []))
+        dones = list(self.locals.get("dones", []))
+
+        reward_value = _safe_float(rewards[-1] if rewards else 0.0)
+        self._reward_window.append(reward_value)
+
+        latest_info = infos[-1]
+        latest_done = False
+        for index, info in enumerate(infos):
+            done = bool(dones[index]) if index < len(dones) else False
+            latest_done = latest_done or done
+
+            if info.get("progress_jump_detected", False):
+                self._progress_jumps += 1
+
+            progress_m = _safe_float(info.get("episode_progress_m"))
+            self._best_episode_progress_m = max(self._best_episode_progress_m, progress_m)
+
+            if done:
+                reason = str(info.get("termination_reason", "none") or "none")
+                if reason == "none":
+                    reason = "episode_end"
+                self._latest_termination = reason
+                self._termination_counts[reason] += 1
+                self._terminations_total += 1
+                self._episodes_completed += 1
+
+        if (
+            self.num_timesteps - self._last_sent_step < self._update_every_steps
+            and not latest_done
+        ):
+            return True
+
+        self._last_sent_step = int(self.num_timesteps)
+        self._send_payload(latest_info, reward_value)
+        return True
+
+    def _on_training_end(self) -> None:
+        send_status = getattr(self._hud, "send_status", None)
+        if callable(send_status):
+            send_status("ended", active=False)
+
+    def _send_payload(self, info: dict[str, Any], reward_value: float) -> None:
+        reward_info = info.get("reward", {})
+        if not isinstance(reward_info, dict):
+            reward_info = {}
+        control = info.get("control", {})
+        if not isinstance(control, dict):
+            control = {}
+
+        elapsed = max(0.001, time.monotonic() - self._started_at)
+        current_step = int(self.num_timesteps)
+        steps_per_second = current_step / elapsed
+        remaining_steps = max(0, self._total_timesteps - current_step)
+        eta_seconds = remaining_steps / steps_per_second if steps_per_second > 0 else 0.0
+
+        progress_m = _safe_float(info.get("episode_progress_m"))
+        lap_progress_percent = max(0.0, min(100.0, progress_m / self._full_lap_m * 100.0))
+        heading_rad = _safe_float(
+            info.get("heading_error_rad", reward_info.get("heading_error_rad"))
+        )
+        speed_mps = _safe_float(reward_info.get("forward_speed_mps"))
+        reward_mean = (
+            sum(self._reward_window) / len(self._reward_window)
+            if self._reward_window
+            else reward_value
+        )
+
+        payload = {
+            "has_data": True,
+            "active": True,
+            "status": "training",
+            "run_name": self._run_name,
+            "vehicle_model": self._vehicle_model,
+            "vehicle_label": self._vehicle_label,
+            "reward_config": self._reward_config,
+            "speed_factor": self._speed_factor,
+            "timing_profile": self._timing_profile,
+            "current_step": current_step,
+            "total_steps": self._total_timesteps,
+            "step_percent": _percent(current_step, self._total_timesteps),
+            "steps_per_second": steps_per_second,
+            "eta_seconds": eta_seconds,
+            "episode_number": self._episodes_completed + 1,
+            "episodes_completed": self._episodes_completed,
+            "episode_step": int(_safe_float(info.get("step"))),
+            "max_episode_steps": self._max_episode_steps,
+            "episode_progress_m": progress_m,
+            "full_lap_m": self._full_lap_m,
+            "lap_progress_percent": lap_progress_percent,
+            "best_episode_progress_m": self._best_episode_progress_m,
+            "reward": reward_value,
+            "reward_mean": reward_mean,
+            "progress_reward": _safe_float(reward_info.get("progress_reward")),
+            "speed_reward": _safe_float(reward_info.get("speed_reward")),
+            "progress_delta_m": _safe_float(reward_info.get("progress_delta_m")),
+            "speed_mps": speed_mps,
+            "speed_kph": speed_mps * 3.6,
+            "lateral_error_m": _safe_float(
+                info.get("lateral_error_m", reward_info.get("lateral_error_m"))
+            ),
+            "heading_error_deg": math.degrees(heading_rad),
+            "vehicle_damage": _safe_float(info.get("vehicle_damage")),
+            "stuck_steps": int(_safe_float(info.get("stuck_steps"))),
+            "progress_jumps": self._progress_jumps,
+            "steering": _safe_float(control.get("steering")),
+            "throttle": _safe_float(control.get("throttle")),
+            "brake": _safe_float(control.get("brake")),
+            "terminations_total": self._terminations_total,
+            "latest_termination": self._latest_termination,
+            "term_counts": {
+                "off_track": self._termination_counts.get("off_track", 0),
+                "damage": self._termination_counts.get("damage", 0),
+                "stuck": self._termination_counts.get("stuck", 0),
+                "wall_bash": self._termination_counts.get("wall_bash", 0),
+                "max_episode_steps": self._termination_counts.get("max_episode_steps", 0),
+                "lap_completed": self._termination_counts.get("lap_completed", 0),
+            },
+        }
+
+        send = getattr(self._hud, "send", None)
+        if callable(send):
+            send(payload)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    return result if math.isfinite(result) else default
+
+
+def _percent(value: float, total: float) -> float:
+    total = max(1.0, float(total))
+    return max(0.0, min(100.0, float(value) / total * 100.0))
