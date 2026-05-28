@@ -103,8 +103,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-line-speed",
         type=float,
-        default=32.0,
-        help="Maximum curvature-profile line speed in m/s. Default: 32.",
+        default=42.0,
+        help="Maximum curvature-profile line speed in m/s. Default: 42.",
     )
     parser.add_argument(
         "--min-line-speed",
@@ -115,8 +115,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--curvature-speed-scale",
         type=float,
-        default=700.0,
-        help="Speed reduction per 1/m of upcoming curvature. Default: 700.",
+        default=250.0,
+        help="Speed reduction per 1/m of upcoming curvature. Default: 250.",
     )
     parser.add_argument(
         "--start-ramp-m",
@@ -699,7 +699,7 @@ def _line_speed_for_progress(
     max_speed = max(min_speed, float(max_speed_mps))
     max_curvature_ahead = max(
         track.curvature_at(progress_m + lookahead_m)
-        for lookahead_m in (20.0, 40.0, 80.0)
+        for lookahead_m in (10.0, 25.0, 45.0)
     )
     target_speed = max(min_speed, max_speed - float(curvature_speed_scale) * max_curvature_ahead)
     if start_ramp_m > 0.0:
