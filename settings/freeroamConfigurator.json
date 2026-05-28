@@ -1,0 +1,696 @@
+{
+  "levelName":"hirochi_raceway",
+  "options":{
+    "environment_timeOfDay":"default",
+    "environment_timePlay":"disabled",
+    "traffic_trafficMode":"disabled"
+  },
+  "spawnPointName":"spawn_startline",
+  "spawnPointTile":{
+    "buttonInfo":{},
+    "description":"Hirochi Raceway is a historic but revitalized track located on the east coast of the USA.",
+    "headerTitle":"Starting Line (Hirochi Raceway)",
+    "levelTitle":"Hirochi Raceway",
+    "preview":"/levels/hirochi_raceway/spawn_startline_preview.jpg",
+    "specifications":[
+      [
+        {
+          "icon":"scale",
+          "label":"Size",
+          "value":"0.95mi x 0.95mi (0.91sq mi)"
+        },
+        {
+          "icon":"terrain",
+          "label":"Biome",
+          "value":"Temperate, Forest"
+        },
+        {
+          "icon":"roadStack",
+          "label":"Roads",
+          "value":"70% New asphalt, 30% Abandoned asphalt"
+        },
+        {
+          "icon":"flag",
+          "label":"Suitable for",
+          "value":"Racing, Drifting, Driver Training"
+        },
+        {
+          "icon":"info",
+          "label":"Features",
+          "value":"Road course complex with multiple layouts, Abandoned track sections"
+        },
+        {
+          "icon":"flag",
+          "label":"Country",
+          "value":"United States"
+        }
+      ]
+    ],
+    "tags":{},
+    "validationFiles":[
+      "/levels/hirochi_raceway/hirochi_raceway_preview.jpg",
+      "/levels/hirochi_raceway/main/"
+    ]
+  },
+  "vehicle":{
+    "additionalData":{
+      "paint":"White",
+      "paint2":"Red",
+      "paint3":"Black"
+    },
+    "config":"2000_Regional",
+    "model":"TPUFJunior"
+  },
+  "vehicleTile":{
+    "additionalData":{
+      "paint":"White",
+      "paint2":"Red",
+      "paint3":"Black"
+    },
+    "brand":"SpeedKraft",
+    "buttonInfo":[
+      {
+        "buttonId":49,
+        "canClearFilters":true,
+        "icon":"carPlus",
+        "label":"Spawn New"
+      },
+      {
+        "buttonId":50,
+        "canClearFilters":true,
+        "icon":"carsChange",
+        "isDoubleClickAction":true,
+        "label":"Replace Current",
+        "primary":true
+      }
+    ],
+    "configDetails":{
+      "0-100 km/h":5.6,
+      "0-100 mph":10.4,
+      "0-200 km/h":15.5,
+      "0-60 mph":5.5,
+      "100-0 km/h":33.4,
+      "100-200 km/h":9.8,
+      "60-0 mph":102.3,
+      "60-100 mph":4.9,
+      "Braking G":1.176,
+      "Config Type":"Race",
+      "Configuration":"Formula 2000 Regional (Seq)",
+      "Description":"Built on the same chassis but for a different series. This variant features an aero package as well as a more powerful 2000cc.",
+      "Drivetrain":"RWD",
+      "Fuel Type":"Gasoline",
+      "Induction Type":"NA",
+      "Name":"Formula Ibishu Formula 2000 Regional (Seq)",
+      "Off-Road Score":10,
+      "Power":156,
+      "PowerPeakRPM":6100,
+      "Propulsion":"ICE",
+      "Source":"Custom",
+      "Top Speed":59.00728036,
+      "Torque":195,
+      "TorquePeakRPM":"4150 - 5550",
+      "Transmission":"Sequential",
+      "Value":64800,
+      "Weight":530,
+      "Weight/Power":3.397435897,
+      "aggregates":{
+        "0-100 km/h":{
+          "max":5.6,
+          "min":5.6
+        },
+        "0-60 mph":{
+          "max":5.5,
+          "min":5.5
+        },
+        "Body Style":{
+          "Single Seater":true
+        },
+        "Brand":{
+          "SpeedKraft":true
+        },
+        "Config Type":{
+          "Race":true
+        },
+        "Country":{
+          "Canada":true
+        },
+        "Derby Class":{
+          "Compact Car":true
+        },
+        "Drivetrain":{
+          "RWD":true
+        },
+        "Fuel Type":{
+          "Gasoline":true
+        },
+        "Induction Type":{
+          "NA":true
+        },
+        "Off-Road Score":{
+          "max":10,
+          "min":10
+        },
+        "Propulsion":{
+          "ICE":true
+        },
+        "Source":{
+          "Custom":true,
+          "Mod":true
+        },
+        "Top Speed":{
+          "max":59.00728036,
+          "min":59.00728036
+        },
+        "Transmission":{
+          "Sequential":true
+        },
+        "Type":{
+          "Car":true
+        },
+        "Value":{
+          "max":64800,
+          "min":64800
+        },
+        "Weight":{
+          "max":530,
+          "min":530
+        },
+        "Weight/Power":{
+          "max":3.397435897,
+          "min":3.397435897
+        },
+        "Years":{
+          "max":2020,
+          "min":1998
+        }
+      },
+      "defaultPaint":{
+        "baseColor":[
+          0.87,
+          0.87,
+          0.87,
+          1.4
+        ],
+        "class":"factory",
+        "clearcoat":1,
+        "clearcoatRoughness":0.09,
+        "metallic":0,
+        "name":"White",
+        "roughness":0.8
+      },
+      "defaultPaintName1":"White",
+      "defaultPaintName2":"Red",
+      "defaultPaintName3":"Black",
+      "infoFilename":"/vehicles/TPUFJunior/info_2000_Regional.json",
+      "is_default_config":false,
+      "key":"2000_Regional",
+      "model_key":"TPUFJunior",
+      "paints":{},
+      "pcFilename":"/vehicles/TPUFJunior/2000_Regional.pc",
+      "preview":"/vehicles/TPUFJunior/2000_Regional.jpg"
+    },
+    "configKey":"2000_Regional",
+    "generalSpecs":[
+      {
+        "isFromConfig":false,
+        "key":"Years",
+        "value":"1998 - 2020"
+      },
+      {
+        "isFromConfig":false,
+        "key":"Country",
+        "value":"Canada"
+      },
+      {
+        "isFromConfig":true,
+        "key":"Power",
+        "value":[
+          {
+            "text":"154 bhp"
+          },
+          {
+            "italic":true,
+            "text":"@ 6100 rpm"
+          }
+        ]
+      },
+      {
+        "isFromConfig":true,
+        "key":"Weight",
+        "value":"1168 lb"
+      },
+      {
+        "isFromConfig":true,
+        "key":"Value",
+        "value":"$64,800.00"
+      }
+    ],
+    "headerTitle":"SpeedKraft Formula Ibishu Formula 2000 Regional (Seq)",
+    "iconTags":[
+      {
+        "icon":"RWD",
+        "label":"Drivetrain: Rear Wheel Drive"
+      },
+      {
+        "icon":"twoArrowsHorizontal",
+        "label":"Sequential Transmission"
+      },
+      {
+        "icon":"intakeTrumpets",
+        "label":"Naturally Aspirated"
+      },
+      {
+        "icon":"fuelPump",
+        "label":"Energy Source: Gasoline"
+      }
+    ],
+    "isStandalonePC":false,
+    "modelKey":"TPUFJunior",
+    "paints":{
+      "factoryPaints":[
+        {
+          "baseColor":[
+            0.05,
+            0.05,
+            0.05,
+            1.5
+          ],
+          "class":"factory",
+          "clearcoat":0.8,
+          "clearcoatRoughness":0.09,
+          "metallic":0.2,
+          "name":"Black",
+          "roughness":0.5
+        },
+        {
+          "baseColor":[
+            0.0517,
+            0.35,
+            0.84,
+            1.6
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Blue",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.0418,
+            0.78,
+            0,
+            1.7
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Bright Green",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.29,
+            0.226,
+            0.166,
+            2
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Brown",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0,
+            0.258,
+            0.145,
+            1.552
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0.15,
+          "name":"Classic Green",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.2,
+            0.2,
+            0.2,
+            2
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Dark Gray",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.27,
+            0.35,
+            0.23,
+            1.2
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Forest Green",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.4,
+            0.4,
+            0.4,
+            2
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Gray",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.75,
+            0.023,
+            0.75,
+            1.55
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Hot Pink",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.09115,
+            0.506,
+            0.913,
+            1.7
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Light Blue",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.185,
+            0.185,
+            0.185,
+            1.5
+          ],
+          "class":"factory",
+          "clearcoat":0,
+          "clearcoatRoughness":0,
+          "metallic":0,
+          "name":"Matte Black",
+          "roughness":0.65
+        },
+        {
+          "baseColor":[
+            0.4,
+            0.4,
+            0.4,
+            2
+          ],
+          "class":"factory",
+          "clearcoat":0,
+          "clearcoatRoughness":0,
+          "metallic":0,
+          "name":"Matte Gray",
+          "roughness":0.5
+        },
+        {
+          "baseColor":[
+            0.88,
+            0.38,
+            0.04,
+            1.6
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Orange",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.442,
+            0.0135,
+            0.4425,
+            1.55
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Purple",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            1,
+            0,
+            0,
+            1.8
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Red",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.1846666667,
+            0.265,
+            0.37,
+            1.2
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Steel Blue",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.519,
+            0.471,
+            0.34,
+            2
+          ],
+          "class":"factory",
+          "clearcoat":0,
+          "clearcoatRoughness":0,
+          "metallic":0,
+          "name":"Tan",
+          "roughness":0.5
+        },
+        {
+          "baseColor":[
+            0.87,
+            0.87,
+            0.87,
+            1.4
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"White",
+          "roughness":0.8
+        },
+        {
+          "baseColor":[
+            0.92,
+            0.633,
+            0,
+            1.6
+          ],
+          "class":"factory",
+          "clearcoat":1,
+          "clearcoatRoughness":0.09,
+          "metallic":0,
+          "name":"Yellow",
+          "roughness":0.8
+        }
+      ],
+      "multiPaintSetups":[
+        {
+          "isDefault":true,
+          "isDefaultForConfigByKey":{
+            "2000_Regional":true
+          },
+          "name":"Formula Ibishu Formula 2000 Regional (Seq) default paints",
+          "paintName1":"White",
+          "paintName2":"Red",
+          "paintName3":"Black",
+          "usedByConfigByKey":{
+            "2000_Regional":true
+          }
+        }
+      ]
+    },
+    "preview":"/vehicles/TPUFJunior/2000_Regional.jpg",
+    "specificationsList":[
+      {
+        "label":"Performance",
+        "specifications":[
+          {
+            "isFromConfig":true,
+            "key":"Power",
+            "value":[
+              {
+                "text":"154 bhp"
+              },
+              {
+                "italic":true,
+                "text":"@ 6100 rpm"
+              }
+            ]
+          },
+          {
+            "isFromConfig":true,
+            "key":"Torque",
+            "value":[
+              {
+                "text":"144 lb-ft"
+              },
+              {
+                "italic":true,
+                "text":"@ 4150 - 5550 rpm"
+              }
+            ]
+          },
+          {
+            "isFromConfig":true,
+            "key":"Weight",
+            "value":"1168 lb"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Top Speed",
+            "value":"132.00 mph"
+          },
+          {
+            "isFromConfig":true,
+            "key":"0-60 mph",
+            "value":"5.50 s"
+          },
+          {
+            "isFromConfig":true,
+            "key":"0-100 mph",
+            "value":"10.40 s"
+          },
+          {
+            "isFromConfig":true,
+            "key":"60-100 mph",
+            "value":"4.90 s"
+          },
+          {
+            "isFromConfig":true,
+            "key":"60-0 mph",
+            "value":"335.63 ft"
+          },
+          {
+            "isFromConfig":true,
+            "key":"0-100 km/h",
+            "value":"5.60 s"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Braking G",
+            "value":"1.176"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Weight/Power",
+            "value":"7.59 lb/bhp"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Off-Road Score",
+            "value":"10"
+          }
+        ]
+      },
+      {
+        "label":"Other",
+        "specifications":[
+          {
+            "isFromConfig":false,
+            "key":"Type",
+            "value":"Car"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Config Type",
+            "value":"Race"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Transmission",
+            "value":"Sequential"
+          },
+          {
+            "isFromConfig":false,
+            "key":"Derby Class",
+            "value":"Compact Car"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Drivetrain",
+            "value":"RWD"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Propulsion",
+            "value":"ICE"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Fuel Type",
+            "value":"Gasoline"
+          },
+          {
+            "isFromConfig":true,
+            "key":"Induction Type",
+            "value":"NA"
+          }
+        ]
+      }
+    ],
+    "tags":[
+      {
+        "icon":"wrench",
+        "label":"Custom"
+      }
+    ],
+    "validationFiles":[
+      "/vehicles/TPUFJunior/info_2000_Regional.json",
+      "/vehicles/TPUFJunior/2000_Regional.pc",
+      "/vehicles/TPUFJunior/2000_Regional.jpg"
+    ]
+  },
+  "version":1
+}
