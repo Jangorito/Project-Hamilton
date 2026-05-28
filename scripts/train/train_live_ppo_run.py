@@ -425,7 +425,29 @@ def main() -> None:
     parser.add_argument("--reward-config", metavar="KEY", default=None,
                         help="Reward config key from REWARD_CONFIGS (v1 or v2). "
                              "Default: v1. Can also be set via launcher_session.json.")
+    parser.add_argument("--car", metavar="MODEL", default=None,
+                        choices=["etkc", "sbr"],
+                        help="Vehicle model (etkc or sbr). Overrides launcher_session.json.")
+    parser.add_argument("--port", metavar="PORT", type=int, default=None,
+                        help="BeamNG.tech RPC port (default: 25252). Must differ per parallel run.")
+    parser.add_argument("--beamng-user", metavar="PATH", default=None,
+                        help="BeamNG user data folder. Required for a second parallel instance.")
+    parser.add_argument("--session-file", metavar="PATH", default=None,
+                        help="Launcher session JSON path. Defaults to config/launcher_session.json.")
+    parser.add_argument("--progress-file", metavar="PATH", default=None,
+                        help="Live step-count file. Defaults to logs/remote/current_steps.txt.")
+    parser.add_argument("--stop-signal-file", metavar="PATH", default=None,
+                        help="Stop signal file. Defaults to logs/remote/stop_signal.txt.")
     args = parser.parse_args()
+
+    # Allow parallel runs to use separate session / progress / stop-signal files.
+    global _SESSION_CONFIG_PATH, _PROGRESS_FILE, _STOP_SIGNAL_FILE
+    if args.session_file:
+        _SESSION_CONFIG_PATH = Path(args.session_file)
+    if args.progress_file:
+        _PROGRESS_FILE = Path(args.progress_file)
+    if args.stop_signal_file:
+        _STOP_SIGNAL_FILE = Path(args.stop_signal_file)
 
     # CLI args take precedence over launcher session config.
     session = _load_session_config()
@@ -447,6 +469,13 @@ def main() -> None:
         sys.exit("Error: timing_profile must be 'legacy_60hz' or 'det50ms'.")
     debug_mode = bool(session.get("debug_mode", False))
     beamng_hud_enabled = bool(session.get("beamng_hud", True))
+
+    # CLI overrides session config for parallelism knobs.
+    if args.car:
+        vehicle_model = args.car
+    from beamng_rl.bootstrap.beamng_setup import PORT as _DEFAULT_PORT
+    port = args.port or int(session.get("port", _DEFAULT_PORT))
+    beamng_user = args.beamng_user or session.get("beamng_user") or None
 
     # Resolve reward config key: CLI > launcher session > default "v1".
     reward_key = args.reward_config or str(session.get("reward_config", "v1"))
@@ -566,6 +595,8 @@ def main() -> None:
             reward_config=reward_config,
             speed_factor=speed_factor,
             timing_profile=timing_profile,
+            beamng_port=port,
+            beamng_user=beamng_user,
             **env_config,
         )
 
