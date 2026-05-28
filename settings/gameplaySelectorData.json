@@ -1,0 +1,16 @@
+{
+  "displayData":{
+    "clusterMode":"none",
+    "defaultFreeroamAction":"configureFreeroam",
+    "displaySize":"medium",
+    "groupMode":"system",
+    "showAuxContent":false,
+    "showCareerContent":false,
+    "showFavouritesMode":"reducedClusters",
+    "showRecentMode":"completeClusters",
+    "sorting":"automatic"
+  },
+  "favourites":{},
+  "recentItems":{},
+  "version":11
+}

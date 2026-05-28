@@ -1,0 +1,7 @@
+{
+  "cameraConfig":"{\"data\":[{\"enabled\":true,\"name\":\"orbit\"},{\"enabled\":true,\"name\":\"driver\"},{\"enabled\":true,\"name\":\"onboard.hood\"},{\"enabled\":false,\"name\":\"external\"},{\"enabled\":false,\"name\":\"relative\"},{\"enabled\":false,\"name\":\"chase\"},{\"enabled\":true,\"name\":\"crash\"},{\"enabled\":true,\"name\":\"noise\"},{\"enabled\":true,\"name\":\"onboard.driver\"},{\"enabled\":true,\"name\":\"unicycle\"},{\"enabled\":false,\"name\":\"topDown\"},{\"enabled\":true,\"name\":\"onboard.Roof\"},{\"enabled\":true,\"name\":\"onboard.Dash\"},{\"enabled\":true,\"name\":\"onboard.Side\"},{\"enabled\":true,\"name\":\"onboard.Interior\"},{\"enabled\":true,\"name\":\"onboard.hoop\"},{\"enabled\":true,\"name\":\"onboard.roof\"}],\"version\":1}",
+  "onlineFeatures":"enable",
+  "showStandalonePcs":false,
+  "telemetry":"disable",
+  "uiUnits":"metric"
+}

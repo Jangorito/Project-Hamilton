@@ -1,0 +1,15 @@
+{
+  "car": "etkc",
+  "car_label": "ETK K-Series Trackday A",
+  "run_name": "v21b_etk_16x_280ksteps",
+  "fresh": true,
+  "total_timesteps": 280000,
+  "max_damage": 500.0,
+  "speed_factor": 16,
+  "timing_profile": "det50ms",
+  "reward_config": "v21b",
+  "debug_mode": false,
+  "port": 25253,
+  "beamng_user": "C:\\Users\\Jango\\AppData\\Local\\BeamNG_w2",
+  "prev_max_damage": 500.0
+}
