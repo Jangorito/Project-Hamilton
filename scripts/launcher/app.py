@@ -54,13 +54,34 @@ CAR_RUN_SUFFIXES = {
 }
 SPEED_FACTORS = {1, 2, 4, 8, 16, 32}
 TIMING_PROFILES = {"legacy_60hz", "det50ms"}
-REWARD_CONFIG_KEYS = {"v1", "v2"}
+REWARD_CONFIG_KEYS = {"v1", "v2", "v21a", "v21b"}
 
 PYTHON_EXE = REPO_ROOT / "venv" / "Scripts" / "python.exe"
 if not PYTHON_EXE.exists():
     PYTHON_EXE = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 if not PYTHON_EXE.exists():
     PYTHON_EXE = Path("python")
+
+# ---------------------------------------------------------------------------
+# Slot 2 — parallel training instance
+# ---------------------------------------------------------------------------
+SLOT2_PORT = 25253
+SLOT2_BEAMNG_USER = Path(os.environ.get(
+    "BEAMNG_USER_SLOT2",
+    str(Path.home() / "AppData" / "Local" / "BeamNG_w2"),
+))
+SLOT2_SESSION_CONFIG = REPO_ROOT / "config" / "launcher_session_2.json"
+SLOT2_PID_FILE       = LOG_DIR / "training_2.pid"
+SLOT2_LOG_FILE       = LOG_DIR / "training_2.log"
+SLOT2_PROGRESS_FILE  = LOG_DIR / "current_steps_2.txt"
+SLOT2_STOP_SIGNAL    = LOG_DIR / "stop_signal_2.txt"
+
+_slot2_proc: dict  = {"proc": None, "log_file": None, "run_name": None}
+_pace2: dict       = {"mtime": 0.0, "steps": 0, "rate": None}
+
+# OBS streaming status cache — avoids a 2 s TCP timeout on every /api/status poll.
+_streaming_cache: dict = {"value": False, "checked_at": 0.0}
+_STREAMING_CACHE_TTL = 15.0  # seconds between actual OBS connection attempts
 
 # Fallback pace used before a real measurement is available.
 _STEPS_PER_SECOND_FALLBACK = 27_000 / 7_200
@@ -128,13 +149,98 @@ def _is_training() -> bool:
     return "train_live_ppo_run" in result.stdout
 
 
+def _get_training_2_pid() -> int | None:
+    if not SLOT2_PID_FILE.exists():
+        return None
+    try:
+        pid = int(SLOT2_PID_FILE.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return None
+    result = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+        capture_output=True, text=True,
+    )
+    return pid if str(pid) in result.stdout else None
+
+
+def _is_training_2() -> bool:
+    return _get_training_2_pid() is not None
+
+
+def _read_live_steps_2() -> int | None:
+    if not SLOT2_PROGRESS_FILE.exists():
+        _pace2["mtime"] = 0.0
+        _pace2["steps"] = 0
+        _pace2["rate"] = None
+        return None
+    try:
+        steps = int(SLOT2_PROGRESS_FILE.read_text(encoding="utf-8").strip())
+        mtime = SLOT2_PROGRESS_FILE.stat().st_mtime
+    except (ValueError, OSError):
+        return None
+    if _pace2["mtime"] > 0 and mtime > _pace2["mtime"]:
+        dt = mtime - _pace2["mtime"]
+        ds = steps - _pace2["steps"]
+        if dt > 0 and ds > 0:
+            _pace2["rate"] = ds / dt
+    if mtime != _pace2["mtime"]:
+        _pace2["mtime"] = mtime
+        _pace2["steps"] = steps
+    return steps
+
+
+def _get_active_run_info_2() -> dict:
+    run_name = _slot2_proc.get("run_name")
+    session = _load_slot2_session()
+    total = _safe_timesteps(session.get("total_timesteps"), 100_000)
+    if not run_name:
+        return {"run_name": None, "current_steps": 0, "total_steps": total}
+    current_steps = _read_live_steps_2()
+    if current_steps is None:
+        ckpt = rm.find_latest_checkpoint(run_name) if rm.exists(run_name) else None
+        current_steps = 0
+        if ckpt:
+            match = re.search(r"_(\d+)_steps", ckpt.stem)
+            if match:
+                current_steps = int(match.group(1))
+    if rm.exists(run_name):
+        config = rm.load_config(run_name)
+        total = _safe_timesteps(
+            session.get("total_timesteps",
+                        config.get("training", {}).get("total_timesteps", 100_000)),
+            100_000,
+        )
+    return {"run_name": run_name, "current_steps": current_steps, "total_steps": total}
+
+
+def _load_slot2_session() -> dict:
+    if not SLOT2_SESSION_CONFIG.exists():
+        return {}
+    try:
+        return json.loads(SLOT2_SESSION_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_slot2_session(config: dict) -> None:
+    SLOT2_SESSION_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    SLOT2_SESSION_CONFIG.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
 def _is_streaming() -> bool:
+    import time
+    now = time.monotonic()
+    if now - _streaming_cache["checked_at"] < _STREAMING_CACHE_TTL:
+        return _streaming_cache["value"]
     try:
         import obsws_python as obs # type: ignore
         cl = obs.ReqClient(host="localhost", port=OBS_PORT, password=_get_obs_password(), timeout=2)
-        return bool(cl.get_stream_status().output_active)
+        result = bool(cl.get_stream_status().output_active)
     except Exception:
-        return False
+        result = False
+    _streaming_cache["value"] = result
+    _streaming_cache["checked_at"] = now
+    return result
 
 
 def _read_live_steps() -> int | None:
@@ -588,12 +694,14 @@ def api_stop_training():
 @app.route("/api/stop/stream", methods=["POST"])
 def api_stop_stream():
     obs_ok, obs_message = _obs_action("stop")
+    _invalidate_streaming_cache()
     return jsonify({"ok": obs_ok, "message": obs_message or "Stream stopped."})
 
 
 @app.route("/api/start/stream", methods=["POST"])
 def api_start_stream():
     obs_ok, obs_message = _obs_action("start")
+    _invalidate_streaming_cache()
     return jsonify({"ok": obs_ok, "message": obs_message or "Stream started."})
 
 
@@ -646,6 +754,10 @@ def api_damage_restore():
         "max_damage": prev,
         "prev_max_damage": current,
     })
+
+
+def _invalidate_streaming_cache() -> None:
+    _streaming_cache["checked_at"] = 0.0
 
 
 def _obs_action(action: str) -> tuple[bool, str]:
@@ -842,6 +954,200 @@ def api_watch_log():
 def api_stop_beamng():
     _kill_beamng()
     return jsonify({"ok": True, "message": "BeamNG killed."})
+
+
+# ---------------------------------------------------------------------------
+# Routes — slot 2 (parallel training instance)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/2/status")
+def api_2_status():
+    training = _is_training_2()
+    run_info = _get_active_run_info_2()
+    session = _load_slot2_session()
+    car = str(session.get("car", "etkc")).strip().lower()
+    speed_factor = _normalize_speed_factor(session.get("speed_factor", 1))
+    eta = _eta_seconds(
+        run_info["current_steps"],
+        run_info["total_steps"],
+        speed_factor,
+    ) if training else None
+    return jsonify({
+        "is_training": training,
+        "run_name": run_info["run_name"],
+        "current_steps": run_info["current_steps"],
+        "total_steps": run_info["total_steps"],
+        "eta_seconds": eta,
+        "steps_per_second": _pace2["rate"],
+        "max_damage": session.get("max_damage"),
+        "prev_max_damage": session.get("prev_max_damage"),
+        "speed_factor": speed_factor,
+        "reward_config": session.get("reward_config", "v1"),
+        "car": car,
+        "car_label": CAR_LABELS.get(car, car),
+    })
+
+
+@app.route("/api/2/log")
+def api_2_log():
+    if not SLOT2_LOG_FILE.exists():
+        return jsonify({"lines": ["No Run 2 log yet. Start training to see output here."]})
+    try:
+        text = SLOT2_LOG_FILE.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()[-50:]
+        return jsonify({"lines": lines})
+    except OSError:
+        return jsonify({"lines": ["Could not read Run 2 log."]})
+
+
+@app.route("/api/2/launch", methods=["POST"])
+def api_2_launch():
+    data = request.get_json(force=True)
+    car = str(data.get("car", "etkc")).strip().lower()
+    if car not in CAR_LABELS:
+        return jsonify({"ok": False, "message": f"Unknown car {car!r}."}), 400
+    run_name = str(data.get("run_name", "")).strip()
+    fresh = bool(data.get("fresh", False))
+    try:
+        timesteps = _parse_timesteps(data.get("timesteps", 100_000))
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    max_damage = float(data.get("max_damage", 500.0))
+    try:
+        speed_factor = int(data.get("speed_factor", 2))
+    except (TypeError, ValueError):
+        speed_factor = 2
+    if speed_factor not in SPEED_FACTORS:
+        return jsonify({"ok": False, "message": f"Unknown speed factor {speed_factor!r}."}), 400
+    reward_config = str(data.get("reward_config", "v1"))
+    if reward_config not in REWARD_CONFIG_KEYS:
+        return jsonify({"ok": False, "message": f"Unknown reward config {reward_config!r}."}), 400
+    timing_profile = _fresh_timing_profile(speed_factor)
+    debug_mode = bool(data.get("debug_mode", False))
+
+    if fresh:
+        run_name = _ensure_car_suffix(run_name, car, reward_config, speed_factor, timesteps)
+    else:
+        resume_name = run_name or rm.find_latest_run()
+        if not resume_name:
+            return jsonify({"ok": False, "message": "No run to resume. Start fresh."}), 400
+        can_resume, reason = _can_resume_with_car(resume_name, car)
+        if not can_resume and not debug_mode:
+            return jsonify({"ok": False, "message": f"Cannot resume '{resume_name}': {reason}."}), 409
+        timing_profile = _requested_timing_profile(resume_name, speed_factor)
+        can_resume, reason = _can_resume_with_timing(resume_name, timing_profile)
+        if not can_resume and not debug_mode:
+            return jsonify({"ok": False, "message": f"Cannot resume '{resume_name}': {reason}."}), 409
+        run_name = resume_name
+
+    # Kill any existing slot 2 training process.
+    pid2 = _get_training_2_pid()
+    if pid2:
+        subprocess.run(["taskkill", "/F", "/PID", str(pid2), "/T"], capture_output=True)
+
+    session = {
+        "car": car,
+        "car_label": CAR_LABELS[car],
+        "run_name": run_name,
+        "fresh": fresh,
+        "total_timesteps": timesteps,
+        "max_damage": max_damage,
+        "speed_factor": speed_factor,
+        "timing_profile": timing_profile,
+        "reward_config": reward_config,
+        "debug_mode": debug_mode,
+        "port": SLOT2_PORT,
+        "beamng_user": str(SLOT2_BEAMNG_USER),
+        "prev_max_damage": max_damage,
+    }
+    _save_slot2_session(session)
+
+    SLOT2_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lf = _slot2_proc.get("log_file")
+    if lf:
+        try:
+            lf.close()
+        except Exception:
+            pass
+    log_f = SLOT2_LOG_FILE.open("w", encoding="utf-8", buffering=1)
+    proc = subprocess.Popen(
+        [
+            str(PYTHON_EXE),
+            str(REPO_ROOT / "scripts" / "train" / "train_live_ppo_run.py"),
+            "--session-file",    str(SLOT2_SESSION_CONFIG),
+            "--progress-file",   str(SLOT2_PROGRESS_FILE),
+            "--stop-signal-file", str(SLOT2_STOP_SIGNAL),
+        ],
+        stdout=log_f,
+        stderr=subprocess.STDOUT,
+        cwd=str(REPO_ROOT),
+    )
+    _slot2_proc["proc"] = proc
+    _slot2_proc["log_file"] = log_f
+    _slot2_proc["run_name"] = run_name
+
+    SLOT2_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SLOT2_PID_FILE.write_text(str(proc.pid), encoding="utf-8")
+
+    return jsonify({
+        "ok": True,
+        "message": (
+            f"Run 2 started: {CAR_LABELS[car]}, {timesteps:,} steps, "
+            f"{speed_factor}x speed, reward {reward_config}."
+        ),
+    })
+
+
+@app.route("/api/2/stop/training", methods=["POST"])
+def api_2_stop_training():
+    if not _is_training_2():
+        return jsonify({"ok": False, "message": "No Run 2 training process found."})
+    SLOT2_STOP_SIGNAL.parent.mkdir(parents=True, exist_ok=True)
+    SLOT2_STOP_SIGNAL.write_text("stop", encoding="utf-8")
+    return jsonify({
+        "ok": True,
+        "message": "Stop signal sent to Run 2 — will save after current rollout.",
+    })
+
+
+@app.route("/api/2/damage/set", methods=["POST"])
+def api_2_damage_set():
+    data = request.get_json(force=True)
+    new_damage = float(data.get("max_damage", 500.0))
+    if new_damage < _MIN_DAMAGE_THRESHOLD:
+        return jsonify({
+            "ok": False,
+            "message": f"max_damage {new_damage:.0f} is below minimum ({_MIN_DAMAGE_THRESHOLD:.0f}).",
+        }), 400
+    session = _load_slot2_session()
+    prev = session.get("max_damage", 500.0)
+    session["prev_max_damage"] = prev
+    session["max_damage"] = new_damage
+    _save_slot2_session(session)
+    return jsonify({
+        "ok": True,
+        "message": f"Run 2 max_damage set to {new_damage:.0f} (was {prev:.0f}).",
+        "max_damage": new_damage,
+        "prev_max_damage": prev,
+    })
+
+
+@app.route("/api/2/damage/restore", methods=["POST"])
+def api_2_damage_restore():
+    session = _load_slot2_session()
+    prev = session.get("prev_max_damage")
+    if prev is None:
+        return jsonify({"ok": False, "message": "No previous value to restore."}), 400
+    current = session.get("max_damage", 500.0)
+    session["max_damage"] = prev
+    session["prev_max_damage"] = current
+    _save_slot2_session(session)
+    return jsonify({
+        "ok": True,
+        "message": f"Run 2 max_damage restored to {prev:.0f} (was {current:.0f}).",
+        "max_damage": prev,
+        "prev_max_damage": current,
+    })
 
 
 # ---------------------------------------------------------------------------

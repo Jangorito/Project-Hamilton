@@ -26,6 +26,8 @@
     --yellow-dim: #3d2a00;
     --radius:     6px;
     --font-mono:  'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    --orange:     #f0883e;
+    --orange-dim: #3d1a00;
   }
 
   html, body {
@@ -48,7 +50,7 @@
     display: grid;
     grid-template-columns: 340px 1fr;
     gap: 0;
-    height: calc(100vh - 64px);
+    height: calc(100vh - 64px - 40px);
     overflow: hidden;
   }
 
@@ -585,6 +587,79 @@
     border-color: var(--blue);
     color: var(--blue);
   }
+
+  /* ── Run navigation bar ───────────────────────────────────── */
+  .run-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 20px;
+    height: 40px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .run-tab {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .run-tab:hover { color: var(--text); border-color: var(--border2); }
+  .run-tab.run-active-1 { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
+  .run-tab.run-active-2 { background: var(--orange-dim); border-color: var(--orange); color: var(--orange); }
+
+  .run-tab-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--border2);
+    flex-shrink: 0;
+    transition: background 0.2s;
+  }
+  .run-tab-dot.live { background: var(--green); box-shadow: 0 0 5px var(--green); animation: pulse 2s infinite; }
+
+  .run-tab-close {
+    width: 14px; height: 14px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 0;
+    transition: color 0.15s;
+    margin-left: 2px;
+  }
+  .run-tab-close:hover { color: var(--red); }
+
+  .btn-add-run {
+    width: 26px; height: 26px;
+    border-radius: var(--radius);
+    border: 1px dashed var(--border2);
+    background: transparent;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+  }
+  .btn-add-run:hover { color: var(--text); border-color: var(--muted); }
+  .btn-add-run:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* ── Run 2 orange accent override ─────────────────────────── */
+  .run-2-content { --blue: var(--orange); --blue-dim: var(--orange-dim); }
 </style>
 </head>
 <body>
@@ -607,8 +682,22 @@
     <div class="header-run-info" id="header-run-info">—</div>
   </header>
 
+  <!-- ── Run navigation bar ──────────────────────────────────── -->
+  <div class="run-nav">
+    <button class="run-tab run-active-1" id="run-tab-1" onclick="switchRunSlot(1)">
+      <span class="run-tab-dot" id="run-tab-dot-1"></span>
+      Run 1
+    </button>
+    <button class="run-tab" id="run-tab-2" onclick="switchRunSlot(2)" style="display:none">
+      <span class="run-tab-dot" id="run-tab-dot-2"></span>
+      Run 2
+      <button class="run-tab-close" onclick="removeRun2(event)" title="Remove Run 2">✕</button>
+    </button>
+    <button class="btn-add-run" id="btn-add-run" onclick="addRun2()" title="Add parallel run">+</button>
+  </div>
+
   <!-- ── Main ────────────────────────────────────────────────── -->
-  <div class="main">
+  <div class="main" id="run-1-content">
 
     <!-- ── Left panel: Launch config ─────────────────────────── -->
     <div class="panel panel-left">
@@ -661,6 +750,22 @@
             <div>
               <div class="radio-name">V2 — Literature</div>
               <div class="radio-sub">No speed bonus · strong smoothness · relaxed centreline</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="reward" data-value="v21a">
+            <input type="radio" name="reward" value="v21a">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2.1-A — Physics target</div>
+              <div class="radio-sub">Physics curvature speed · traction budget penalty</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="reward" data-value="v21b">
+            <input type="radio" name="reward" value="v21b">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2.1-B — Braking lookahead</div>
+              <div class="radio-sub">V2.1-A + braking shortfall anticipation</div>
             </div>
           </label>
         </div>
@@ -897,6 +1002,195 @@
 
     </div>
   </div>
+
+  <!-- ── Run 2 ────────────────────────────────────────────────── -->
+  <div class="main run-2-content" id="run-2-content" style="display:none">
+
+    <!-- Left panel -->
+    <div class="panel panel-left">
+
+      <div style="font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:var(--orange); margin-bottom:16px;">Run 2 — Parallel</div>
+
+      <div id="panel-2-train-config">
+
+      <div class="panel-section">
+        <div class="section-label">Vehicle</div>
+        <div class="radio-group" id="car-group-2">
+          <label class="radio-option" data-group="car-2" data-value="sbr">
+            <input type="radio" name="car-2" value="sbr">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">SBR4 Track</div>
+              <div class="radio-sub">Subaru BRZ · RWD · Natural Aspirated</div>
+            </div>
+          </label>
+          <label class="radio-option selected" data-group="car-2" data-value="etkc">
+            <input type="radio" name="car-2" value="etkc" checked>
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">ETK K-Series Kc6x Trackday A</div>
+              <div class="radio-sub">AWD · Turbocharged · 455 hp</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Reward Config</div>
+        <div class="radio-group" id="reward-group-2">
+          <label class="radio-option selected" data-group="reward-2" data-value="v1">
+            <input type="radio" name="reward-2" value="v1" checked>
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V1 — Baseline</div>
+              <div class="radio-sub">Speed bonus · full centreline · weak smoothness</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="reward-2" data-value="v2">
+            <input type="radio" name="reward-2" value="v2">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2 — Literature</div>
+              <div class="radio-sub">No speed bonus · strong smoothness · relaxed centreline</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="reward-2" data-value="v21a">
+            <input type="radio" name="reward-2" value="v21a">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2.1-A — Physics target</div>
+              <div class="radio-sub">Physics curvature speed · traction budget penalty</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="reward-2" data-value="v21b">
+            <input type="radio" name="reward-2" value="v21b">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2.1-B — Braking lookahead</div>
+              <div class="radio-sub">V2.1-A + braking shortfall anticipation</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div class="panel-section" id="run-section-2">
+        <div class="section-label">Run</div>
+        <div class="run-row">
+          <label class="radio-option selected" data-group="run_mode-2" data-value="resume" style="justify-content:center;text-align:center;">
+            <input type="radio" name="run_mode-2" value="resume" checked>
+            <div class="radio-dot"></div>
+            <span style="font-size:12px;font-weight:500">Resume</span>
+          </label>
+          <label class="radio-option" data-group="run_mode-2" data-value="fresh" style="justify-content:center;text-align:center;">
+            <input type="radio" name="run_mode-2" value="fresh">
+            <div class="radio-dot"></div>
+            <span style="font-size:12px;font-weight:500">Fresh</span>
+          </label>
+        </div>
+        <select class="select" id="resume-select-2"></select>
+        <input type="text" class="input" id="fresh-name-2" placeholder="Run name" style="display:none;margin-top:6px;">
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Total Steps</div>
+        <div class="slider-row">
+          <input type="range" id="steps-slider-2" min="10000" max="200000" step="5000" value="100000">
+          <div class="slider-readout">
+            <div class="slider-steps" id="steps-val-2">100,000</div>
+            <div class="slider-time" id="steps-time-2">~7.5 hours</div>
+          </div>
+        </div>
+        <div class="steps-input-row">
+          <input type="number" class="input" id="steps-input-2" min="1" step="1000" value="100000">
+          <span class="steps-unit">steps</span>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Physics Speed Factor</div>
+        <div class="slider-row">
+          <input type="range" id="speed-slider-2" min="0" max="5" step="1" value="1">
+          <div class="slider-readout">
+            <div class="slider-steps" id="speed-val-2">2x</div>
+            <div class="slider-time" id="speed-sub-2">target 2× faster than real-time</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label" style="color:var(--yellow)">Debug</div>
+        <label class="toggle-row">
+          <input type="checkbox" id="debug-mode-toggle-2">
+          <div class="toggle-switch"></div>
+          <span style="color:var(--yellow)">Bypass vehicle guard</span>
+        </label>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary" id="launch-btn-2" onclick="launch2()">Launch Run 2</button>
+        <button class="btn btn-danger" id="stop-btn-2" onclick="stopTraining2()">Stop Run 2</button>
+      </div>
+
+      </div><!-- #panel-2-train-config -->
+    </div><!-- panel-left -->
+
+    <!-- Right panel -->
+    <div class="panel panel-right">
+
+      <div class="panel-section progress-wrap">
+        <div class="progress-title" id="training-car-title-2">No active Run 2 training</div>
+        <div class="progress-meta">
+          <span id="progress-text-2">0 / 100,000 steps</span>
+          <span id="eta-text-2">—</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill-2" style="background:linear-gradient(90deg,var(--orange),#c2410c)"></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="log-header">
+          <div class="section-label" style="margin-bottom:0">Run 2 Log</div>
+          <div class="log-live-dot">
+            <div class="live-dot" id="live-dot-2"></div>
+            <span id="live-label-2">idle</span>
+          </div>
+        </div>
+        <div style="margin-top:8px">
+          <div id="log-updated-2" style="font-size:11px;color:var(--muted);font-family:var(--font-mono);margin-bottom:4px;">—</div>
+          <div class="log-container" id="log-container-2">
+            <div class="log-line">Waiting for Run 2 to start...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Max Damage Override</div>
+        <div class="damage-row">
+          <div class="damage-input-wrap">
+            <input type="number" class="input" id="damage-input-2" value="500" min="50" step="10" placeholder="500">
+            <span class="damage-unit">pts</span>
+          </div>
+          <button class="btn btn-warn" onclick="setDamage2()">Set</button>
+          <button class="btn btn-sm" id="restore-btn-2" onclick="restoreDamage2()" disabled>Restore</button>
+        </div>
+        <div class="damage-meta" id="damage-meta-2">Active limit: —</div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Quick Actions</div>
+        <div class="actions-row">
+          <button class="btn btn-sm" onclick="startStream()">Start Stream</button>
+          <button class="btn btn-sm" onclick="stopStream()">Stop Stream</button>
+          <button class="btn btn-sm" onclick="wakeScreen()">Wake Screen</button>
+        </div>
+      </div>
+
+    </div><!-- panel-right -->
+  </div><!-- run-2-content -->
+
 </div>
 
 <!-- Toast -->
@@ -1119,7 +1413,7 @@ function suggestedFreshRunName() {
 }
 
 function isAutoFreshRunName(value) {
-  return /^(v1|v2)_(subaru|etk)(_(2|4|8|16|32)x)?(_\d+(k|m)?steps)?$/i.test(value.trim());
+  return /^(v1|v2|v21a|v21b)_(subaru|etk)(_(2|4|8|16|32)x)?(_\d+(k|m)?steps)?$/i.test(value.trim());
 }
 
 function updateFreshNameSuggestion() {
@@ -1249,6 +1543,7 @@ async function pollStatus() {
     lbl.textContent = d.is_training ? 'live' : 'idle';
 
     isTraining = d.is_training;
+    document.getElementById('run-tab-dot-1').className = 'run-tab-dot' + (isTraining ? ' live' : '');
     document.getElementById('launch-btn').disabled = isTraining;
     if (!isTraining) {
       const stopBtn = document.getElementById('stop-btn');
@@ -1579,6 +1874,346 @@ setInterval(() => {
     pollWatchLog();
   }
 }, 3000);
+
+// ── Run slot navigation ───────────────────────────────────────
+let activeRunSlot = 1;
+
+function switchRunSlot(slot) {
+  activeRunSlot = slot;
+  document.getElementById('run-1-content').style.display = slot === 1 ? '' : 'none';
+  document.getElementById('run-2-content').style.display = slot === 2 ? '' : 'none';
+  document.getElementById('run-tab-1').className = 'run-tab' + (slot === 1 ? ' run-active-1' : '');
+  document.getElementById('run-tab-2').className = 'run-tab' + (slot === 2 ? ' run-active-2' : '');
+}
+
+function addRun2() {
+  document.getElementById('run-tab-2').style.display = '';
+  document.getElementById('btn-add-run').disabled = true;
+  localStorage.setItem('run2Active', '1');
+  loadRuns2();
+  switchRunSlot(2);
+}
+
+function removeRun2(e) {
+  e.stopPropagation();
+  if (isTraining2) {
+    toast('Stop Run 2 training before removing.', 'error');
+    return;
+  }
+  document.getElementById('run-tab-2').style.display = 'none';
+  document.getElementById('btn-add-run').disabled = false;
+  localStorage.removeItem('run2Active');
+  switchRunSlot(1);
+}
+
+// Restore Run 2 tab on page load if it was active.
+document.addEventListener('DOMContentLoaded', () => {
+  if (localStorage.getItem('run2Active')) {
+    document.getElementById('run-tab-2').style.display = '';
+    document.getElementById('btn-add-run').disabled = true;
+    loadRuns2();
+  }
+});
+
+// ── Run 2 state ───────────────────────────────────────────────
+let isTraining2 = false;
+let userTouchedCar2 = false;
+let userTouchedSpeed2 = false;
+let userTouchedReward2 = false;
+
+// ── Run 2 init ────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initRadioGroups2();
+  initSlider2();
+  initSpeedSlider2();
+  initRunMode2();
+  pollStatus2();
+  pollLog2();
+  setInterval(pollStatus2, 3000);
+  setInterval(pollLog2, 5000);
+});
+
+function initRadioGroups2() {
+  document.querySelectorAll('.radio-option[data-group^="car-2"],.radio-option[data-group^="reward-2"],.radio-option[data-group^="run_mode-2"]').forEach(el => {
+    el.addEventListener('click', () => {
+      const group = el.dataset.group;
+      document.querySelectorAll(`.radio-option[data-group="${group}"]`)
+        .forEach(o => o.classList.remove('selected'));
+      el.classList.add('selected');
+      el.querySelector('input[type="radio"]').checked = true;
+      if (group === 'car-2') { userTouchedCar2 = true; updateFreshNameSuggestion2(); }
+      if (group === 'reward-2') { userTouchedReward2 = true; updateFreshNameSuggestion2(); }
+      if (group === 'run_mode-2') onRunModeChange2(el.dataset.value);
+    });
+  });
+}
+
+function onRunModeChange2(mode) {
+  document.getElementById('resume-select-2').style.display = mode === 'resume' ? '' : 'none';
+  document.getElementById('fresh-name-2').style.display    = mode === 'fresh'  ? '' : 'none';
+  if (mode === 'fresh') updateFreshNameSuggestion2();
+}
+
+function initRunMode2() {
+  document.getElementById('fresh-name-2').style.display = 'none';
+  updateFreshNameSuggestion2();
+}
+
+function selectedCar2() {
+  const el = document.querySelector('input[name="car-2"]:checked');
+  return el ? el.value : 'etkc';
+}
+
+function selectedRewardConfig2() {
+  const el = document.querySelector('input[name="reward-2"]:checked');
+  return el ? el.value : 'v1';
+}
+
+function selectedRunMode2() {
+  const el = document.querySelector('input[name="run_mode-2"]:checked');
+  return el ? el.value : 'resume';
+}
+
+function selectedSpeedFactor2() {
+  const idx = parseInt(document.getElementById('speed-slider-2').value);
+  return SPEED_FACTORS[idx] ?? 2;
+}
+
+function selectedTimesteps2() {
+  return normalizeTimesteps(document.getElementById('steps-input-2').value)
+    ?? normalizeTimesteps(document.getElementById('steps-slider-2').value)
+    ?? DEFAULT_TIMESTEPS;
+}
+
+function suggestedFreshRunName2() {
+  const suffix = CAR_RUN_SUFFIXES[selectedCar2()] || selectedCar2();
+  const speed = selectedSpeedFactor2();
+  const speedSuffix = speed > 1 ? `_${speed}x` : '';
+  return `${selectedRewardConfig2()}_${suffix}${speedSuffix}_${formatStepSuffix(selectedTimesteps2())}`;
+}
+
+function updateFreshNameSuggestion2() {
+  const input = document.getElementById('fresh-name-2');
+  const suggested = suggestedFreshRunName2();
+  input.placeholder = `Run name (e.g. ${suggested})`;
+  if (selectedRunMode2() === 'fresh' && (!input.value.trim() || isAutoFreshRunName(input.value))) {
+    input.value = suggested;
+  }
+}
+
+function initSlider2() {
+  const slider = document.getElementById('steps-slider-2');
+  const input  = document.getElementById('steps-input-2');
+  slider.addEventListener('input', () => {
+    input.value = slider.value;
+    updateSliderDisplay2();
+    updateFreshNameSuggestion2();
+  });
+  input.addEventListener('input', () => {
+    const val = normalizeTimesteps(input.value);
+    if (val !== null) {
+      slider.value = Math.min(parseInt(slider.max), Math.max(parseInt(slider.min), val));
+    }
+    updateSliderDisplay2();
+    updateFreshNameSuggestion2();
+  });
+  updateSliderDisplay2();
+}
+
+function updateSliderDisplay2() {
+  const val = selectedTimesteps2();
+  const sf  = selectedSpeedFactor2();
+  const hours = val / (STEPS_PER_SECOND_FALLBACK * sf) / 3600;
+  document.getElementById('steps-val-2').textContent  = val.toLocaleString();
+  document.getElementById('steps-time-2').textContent = `~${hours.toFixed(1)} hours`;
+}
+
+function initSpeedSlider2() {
+  document.getElementById('speed-slider-2').addEventListener('input', () => {
+    userTouchedSpeed2 = true;
+    updateSpeedDisplay2();
+    updateFreshNameSuggestion2();
+  });
+  updateSpeedDisplay2();
+}
+
+function updateSpeedDisplay2() {
+  const idx = parseInt(document.getElementById('speed-slider-2').value);
+  const sf  = SPEED_FACTORS[idx];
+  document.getElementById('speed-val-2').textContent = sf + 'x';
+  document.getElementById('speed-sub-2').textContent = sf === 1 ? 'real-time' : `target ${sf}× faster than real-time`;
+  updateSliderDisplay2();
+}
+
+async function loadRuns2() {
+  try {
+    const r = await fetch('/api/runs');
+    const d = await r.json();
+    const sel = document.getElementById('resume-select-2');
+    sel.innerHTML = '';
+    if (!d.runs.length) { sel.innerHTML = '<option value="">No runs yet</option>'; return; }
+    d.runs.slice().reverse().forEach(name => {
+      const opt = document.createElement('option');
+      const details = (d.details || {})[name] || {};
+      const meta = [];
+      if (details.car_label) meta.push(details.car_label);
+      if (details.speed_label) meta.push(details.speed_label);
+      opt.value = name;
+      opt.textContent = meta.length ? `${name} (${meta.join(', ')})` : name;
+      sel.appendChild(opt);
+    });
+  } catch (e) {}
+}
+
+// ── Run 2 status polling ──────────────────────────────────────
+async function pollStatus2() {
+  try {
+    const r = await fetch('/api/2/status');
+    const d = await r.json();
+
+    document.getElementById('run-tab-dot-1').className = 'run-tab-dot' + (isTraining ? ' live' : '');
+    document.getElementById('run-tab-dot-2').className = 'run-tab-dot' + (d.is_training ? ' live' : '');
+
+    document.getElementById('training-car-title-2').textContent = d.is_training
+      ? `Run 2: ${d.car_label || CAR_LABELS[d.car] || 'Selected car'} · ${d.speed_factor || 2}x`
+      : 'No active Run 2 training';
+
+    const pct = d.is_training && d.total_steps > 0
+      ? Math.min(100, (d.current_steps / d.total_steps) * 100) : 0;
+    document.getElementById('progress-fill-2').style.width = pct + '%';
+    document.getElementById('progress-text-2').textContent = d.is_training
+      ? `${(d.current_steps||0).toLocaleString()} / ${(d.total_steps||0).toLocaleString()} steps`
+      : '— / — steps';
+    document.getElementById('eta-text-2').textContent =
+      d.is_training && d.eta_seconds != null ? formatETA(d.eta_seconds) : '—';
+
+    const dot = document.getElementById('live-dot-2');
+    dot.classList.toggle('active', d.is_training);
+    document.getElementById('live-label-2').textContent = d.is_training ? 'live' : 'idle';
+
+    isTraining2 = d.is_training;
+    document.getElementById('launch-btn-2').disabled = isTraining2;
+    if (!isTraining2) {
+      const btn = document.getElementById('stop-btn-2');
+      btn.textContent = 'Stop Run 2';
+      btn.disabled = false;
+    }
+
+    if (d.max_damage != null) {
+      document.getElementById('damage-input-2').value = d.max_damage;
+      document.getElementById('damage-meta-2').textContent =
+        `Active limit: ${d.max_damage} pts` +
+        (d.prev_max_damage != null ? `  (prev: ${d.prev_max_damage})` : '');
+      document.getElementById('restore-btn-2').disabled = d.prev_max_damage == null;
+    }
+
+    if (!isTraining2 && d.speed_factor != null && !userTouchedSpeed2) {
+      const idx = SPEED_FACTORS.indexOf(d.speed_factor);
+      if (idx !== -1) { document.getElementById('speed-slider-2').value = idx; updateSpeedDisplay2(); }
+    }
+    if (!isTraining2 && d.reward_config != null && !userTouchedReward2) {
+      document.querySelectorAll('.radio-option[data-group="reward-2"]').forEach(el => {
+        const match = el.dataset.value === d.reward_config;
+        el.classList.toggle('selected', match);
+        el.querySelector('input[type="radio"]').checked = match;
+      });
+    }
+    if (!isTraining2 && d.car != null && !userTouchedCar2) {
+      document.querySelectorAll('.radio-option[data-group="car-2"]').forEach(el => {
+        const match = el.dataset.value === d.car;
+        el.classList.toggle('selected', match);
+        el.querySelector('input[type="radio"]').checked = match;
+      });
+    }
+  } catch (e) {}
+}
+
+async function pollLog2() {
+  try {
+    const r = await fetch('/api/2/log');
+    const d = await r.json();
+    const el = document.getElementById('log-container-2');
+    const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 20;
+    el.innerHTML = d.lines.map(l => `<div class="log-line">${escHtml(l)}</div>`).join('');
+    if (atBottom) el.scrollTop = el.scrollHeight;
+    document.getElementById('log-updated-2').textContent = 'Last update: ' + new Date().toLocaleTimeString();
+  } catch (e) {}
+}
+
+// ── Run 2 actions ─────────────────────────────────────────────
+async function launch2() {
+  const car        = selectedCar2();
+  const runMode    = selectedRunMode2();
+  const fresh      = runMode === 'fresh';
+  const runName    = fresh
+    ? document.getElementById('fresh-name-2').value.trim()
+    : document.getElementById('resume-select-2').value;
+  const timesteps  = selectedTimesteps2();
+  const speedFactor = selectedSpeedFactor2();
+  const rewardConfig = selectedRewardConfig2();
+  const maxDamage  = parseFloat(document.getElementById('damage-input-2').value) || 500;
+  const debug      = document.getElementById('debug-mode-toggle-2').checked;
+
+  const btn = document.getElementById('launch-btn-2');
+  btn.disabled = true;
+  btn.textContent = 'Launching…';
+
+  try {
+    const r = await fetch('/api/2/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ car, run_name: runName, fresh, timesteps, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig, debug_mode: debug }),
+    });
+    const d = await r.json();
+    toast(d.message, d.ok ? 'success' : 'error');
+    if (d.ok) setTimeout(pollStatus2, 2000);
+  } catch (e) {
+    toast('Run 2 launch failed.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Launch Run 2';
+  }
+}
+
+async function stopTraining2() {
+  const r = await fetch('/api/2/stop/training', { method: 'POST' });
+  const d = await r.json();
+  if (d.ok) {
+    const btn = document.getElementById('stop-btn-2');
+    btn.textContent = 'Finishing rollout…';
+    btn.disabled = true;
+  }
+  toast(d.message, d.ok ? 'info' : 'error');
+  setTimeout(pollStatus2, 1500);
+}
+
+async function setDamage2() {
+  const val = parseFloat(document.getElementById('damage-input-2').value);
+  if (isNaN(val)) { toast('Enter a valid number.', 'error'); return; }
+  const r = await fetch('/api/2/damage/set', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ max_damage: val }),
+  });
+  const d = await r.json();
+  toast(d.message, d.ok ? 'success' : 'error');
+  if (d.ok) {
+    document.getElementById('damage-meta-2').textContent =
+      `Active limit: ${d.max_damage} pts  (prev: ${d.prev_max_damage})`;
+    document.getElementById('restore-btn-2').disabled = false;
+  }
+}
+
+async function restoreDamage2() {
+  const r = await fetch('/api/2/damage/restore', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, d.ok ? 'success' : 'error');
+  if (d.ok) {
+    document.getElementById('damage-input-2').value = d.max_damage;
+    document.getElementById('damage-meta-2').textContent =
+      `Active limit: ${d.max_damage} pts  (prev: ${d.prev_max_damage})`;
+  }
+}
 </script>
 </body>
 </html>
