@@ -82,6 +82,23 @@ class RewardConfig:
     curvature_target_speed_min: float = 12.0    # m/s — floor for tight hairpins
     curvature_speed_scale: float = 700.0        # m/s per (1/m) of curvature
 
+    # V2.1-A: physics-shaped curvature target.
+    # When set, replaces the legacy linear formula with:
+    #   v_target = sqrt(lateral_accel_budget_mps2 / max(curvature, epsilon))
+    # None preserves the legacy linear formula so v1/v2 configs are unaffected.
+    lateral_accel_budget_mps2: float | None = None
+    min_corner_speed_mps: float = 8.0        # floor when corner is very tight
+    max_straight_speed_mps: float = 35.0     # cap on a straight
+    curvature_epsilon: float = 0.001         # prevents division by zero on flat sections
+    allowed_aggression: float = 1.0          # risk_ratio threshold before penalty starts
+    traction_budget_weight: float = 3.0
+    traction_budget_power: float = 2.0
+
+    # V2.1-B: braking distance anticipation.
+    # braking_shortfall_weight > 0 activates; requires physics formula to be active.
+    braking_accel_budget_mps2: float = 9.0
+    braking_shortfall_weight: float = 0.0
+
 
 # ---------------------------------------------------------------------------
 # Reward config registry — named presets for controlled experiments.
@@ -149,6 +166,56 @@ REWARD_CONFIGS: dict[str, RewardConfig] = {
         curvature_target_speed_min=12.0,
         curvature_speed_scale=700.0,
     ),
+    # V2.1-A — physics-shaped curvature target. Inherits v2's weight adjustments
+    # (no speed bonus, stronger smoothness, softer lateral) but replaces the
+    # linear curvature formula with v_target = sqrt(a_lat_budget / kappa).
+    # Traction penalty fires when forward_speed > allowed_aggression * target_speed.
+    "v21a": RewardConfig(
+        progress_weight=1.0,
+        speed_weight=0.0,
+        heading_error_weight=0.2,
+        lateral_error_weight=0.05,
+        off_track_penalty=10.0,
+        reverse_progress_penalty=2.0,
+        stuck_step_penalty=0.05,
+        action_smoothness_weight=0.4,
+        curvature_overspeed_weight=0.0,     # superseded by traction_budget_penalty
+        curvature_target_speed_base=35.0,   # unused with physics formula
+        curvature_target_speed_min=12.0,    # unused with physics formula
+        curvature_speed_scale=700.0,        # unused with physics formula
+        lateral_accel_budget_mps2=8.0,
+        min_corner_speed_mps=8.0,
+        max_straight_speed_mps=35.0,
+        curvature_epsilon=0.001,
+        allowed_aggression=1.0,
+        traction_budget_weight=3.0,
+        traction_budget_power=2.0,
+    ),
+    # V2.1-B — V2.1-A plus braking-distance anticipation. Penalises the agent
+    # when it cannot brake to the 80 m lookahead corner target speed in time.
+    "v21b": RewardConfig(
+        progress_weight=1.0,
+        speed_weight=0.0,
+        heading_error_weight=0.2,
+        lateral_error_weight=0.05,
+        off_track_penalty=10.0,
+        reverse_progress_penalty=2.0,
+        stuck_step_penalty=0.05,
+        action_smoothness_weight=0.4,
+        curvature_overspeed_weight=0.0,
+        curvature_target_speed_base=35.0,
+        curvature_target_speed_min=12.0,
+        curvature_speed_scale=700.0,
+        lateral_accel_budget_mps2=8.0,
+        min_corner_speed_mps=8.0,
+        max_straight_speed_mps=35.0,
+        curvature_epsilon=0.001,
+        allowed_aggression=1.0,
+        traction_budget_weight=3.0,
+        traction_budget_power=2.0,
+        braking_accel_budget_mps2=9.0,
+        braking_shortfall_weight=0.1,
+    ),
 }
 
 
@@ -196,6 +263,7 @@ class BeamNGRacingEnv(gym.Env):
         disable_shadows: bool = False,
         beamng_host: str = HOST,
         beamng_port: int = PORT,
+        beamng_user: str | Path | None = None,
         scenario_name: str = "hirochi_raceway",
         vehicle_id: str = "ego_vehicle",
         steps_per_action: int = 3,
@@ -271,6 +339,7 @@ class BeamNGRacingEnv(gym.Env):
         self.disable_shadows = bool(disable_shadows)
         self.beamng_host = str(beamng_host)
         self.beamng_port = int(beamng_port)
+        self.beamng_user = beamng_user
         self.live_spawn_mode = live_spawn_mode_value
         self.live_spawn_progress_m = float(live_spawn_progress_m)
         self.live_spawn_lateral_offset_m = float(live_spawn_lateral_offset_m)
@@ -694,16 +763,63 @@ class BeamNGRacingEnv(gym.Env):
         )
 
         lap_progress = float(query_result.lap_progress)
-        max_curvature_ahead = max(
-            self.track.curvature_at(lap_progress + d) for d in (20.0, 40.0, 80.0)
-        )
-        target_speed = max(
-            config.curvature_target_speed_min,
-            config.curvature_target_speed_base - config.curvature_speed_scale * max_curvature_ahead,
-        )
-        curvature_overspeed_penalty = (
-            max(0.0, forward_speed_mps - target_speed) * config.curvature_overspeed_weight
-        )
+        curvature_20m = self.track.curvature_at(lap_progress + 20.0)
+        curvature_40m = self.track.curvature_at(lap_progress + 40.0)
+        curvature_80m = self.track.curvature_at(lap_progress + 80.0)
+        max_curvature_ahead = max(curvature_20m, curvature_40m, curvature_80m)
+
+        if config.lateral_accel_budget_mps2 is not None:
+            # V2.1-A: physics-shaped target — v_target = sqrt(a_lat / kappa)
+            eps = config.curvature_epsilon
+            raw_target = math.sqrt(
+                config.lateral_accel_budget_mps2 / max(max_curvature_ahead, eps)
+            )
+            target_speed = float(
+                np.clip(raw_target, config.min_corner_speed_mps, config.max_straight_speed_mps)
+            )
+            risk_ratio = forward_speed_mps / max(target_speed, 0.1)
+            risk_excess = max(0.0, risk_ratio - config.allowed_aggression)
+            traction_budget_penalty = (
+                (risk_excess ** config.traction_budget_power) * config.traction_budget_weight
+            )
+            curvature_overspeed_penalty = 0.0
+        else:
+            # Legacy linear formula — unchanged for v1 and v2.
+            target_speed = max(
+                config.curvature_target_speed_min,
+                config.curvature_target_speed_base - config.curvature_speed_scale * max_curvature_ahead,
+            )
+            curvature_overspeed_penalty = (
+                max(0.0, forward_speed_mps - target_speed) * config.curvature_overspeed_weight
+            )
+            traction_budget_penalty = 0.0
+            risk_ratio = forward_speed_mps / max(target_speed, 0.1)
+            risk_excess = 0.0
+
+        lateral_accel_required = forward_speed_mps ** 2 * max_curvature_ahead
+
+        # V2.1-B: braking shortfall — fires when the car cannot brake to the
+        # 80 m lookahead corner target speed before reaching it.
+        braking_shortfall_m = 0.0
+        required_braking_distance_m = 0.0
+        upcoming_target_speed_mps = target_speed
+        braking_shortfall_penalty = 0.0
+
+        if config.lateral_accel_budget_mps2 is not None and config.braking_shortfall_weight > 0.0:
+            eps = config.curvature_epsilon
+            raw_upcoming = math.sqrt(
+                config.lateral_accel_budget_mps2 / max(curvature_80m, eps)
+            )
+            upcoming_target_speed_mps = float(
+                np.clip(raw_upcoming, config.min_corner_speed_mps, config.max_straight_speed_mps)
+            )
+            required_braking_distance_m = max(
+                0.0,
+                (forward_speed_mps ** 2 - upcoming_target_speed_mps ** 2)
+                / (2.0 * config.braking_accel_budget_mps2),
+            )
+            braking_shortfall_m = max(0.0, required_braking_distance_m - 80.0)
+            braking_shortfall_penalty = braking_shortfall_m * config.braking_shortfall_weight
 
         reward = (
             progress_reward
@@ -716,6 +832,8 @@ class BeamNGRacingEnv(gym.Env):
             - progress_jump_penalty_value
             - smoothness_penalty
             - curvature_overspeed_penalty
+            - traction_budget_penalty
+            - braking_shortfall_penalty
         )
 
         reward_info = {
@@ -738,9 +856,21 @@ class BeamNGRacingEnv(gym.Env):
             "stuck_penalty": float(stuck_penalty),
             "progress_jump_penalty": float(progress_jump_penalty_value),
             "smoothness_penalty": float(smoothness_penalty),
+            "curvature_20m": float(curvature_20m),
+            "curvature_40m": float(curvature_40m),
+            "curvature_80m": float(curvature_80m),
             "max_curvature_ahead": float(max_curvature_ahead),
             "curvature_target_speed": float(target_speed),
             "curvature_overspeed_penalty": float(curvature_overspeed_penalty),
+            "physics_target_speed_mps": float(target_speed),
+            "lateral_accel_required_mps2": float(lateral_accel_required),
+            "lateral_risk_ratio": float(risk_ratio),
+            "risk_excess": float(risk_excess),
+            "traction_budget_penalty": float(traction_budget_penalty),
+            "upcoming_target_speed_mps": float(upcoming_target_speed_mps),
+            "required_braking_distance_m": float(required_braking_distance_m),
+            "braking_shortfall_m": float(braking_shortfall_m),
+            "braking_shortfall_penalty": float(braking_shortfall_penalty),
             "total_reward": float(reward),
         }
         return float(reward), reward_info
@@ -1017,6 +1147,7 @@ class BeamNGRacingEnv(gym.Env):
                     # nogpu=True disables GPU rendering (beamngpy 1.35 API).
                     # Controlled by nogfx=True on BeamNGRacingEnv — change it there.
                     nogpu=self.nogfx,
+                    **({"user": str(self.beamng_user)} if self.beamng_user is not None else {}),
                 )
                 beamng.open(launch=True)
             else:
@@ -1392,39 +1523,48 @@ class BeamNGRacingEnv(gym.Env):
 def _smoke_test() -> None:
     """Run a small environment loop without launching BeamNG."""
 
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--reward-config", default="v1", choices=list(REWARD_CONFIGS.keys()))
+    args = ap.parse_args()
+
     repo_root = Path(__file__).resolve().parents[3]
     centreline_path = (
         repo_root / "data" / "hirochi_track" / "centreline_resampled_2_0m.json"
     )
 
-    # Mock mode is the default and intentionally remains the smoke-test path.
-    # To try live mode manually with the shared bootstrap setup, instantiate:
-    #   env = BeamNGRacingEnv(centreline_path, use_mock=False, launch_beamng=True)
-    env = BeamNGRacingEnv(centreline_path)
+    env = BeamNGRacingEnv(centreline_path, reward_config=REWARD_CONFIGS[args.reward_config])
     print(f"Loaded track: {centreline_path}")
+    print(f"Reward config: {args.reward_config}")
     print(f"Observation space: {env.observation_space}")
     print(f"Action space: {env.action_space}")
 
     observation, info = env.reset()
     print(f"Initial observation shape: {observation.shape}")
-    print(f"Initial info: {info}")
+
+    # V2.1-specific keys to show when present
+    V21_KEYS = [
+        "traction_budget_penalty", "braking_shortfall_penalty",
+        "lateral_risk_ratio", "risk_excess",
+        "physics_target_speed_mps", "braking_shortfall_m",
+    ]
 
     for step_index in range(1, 6):
         action = env.action_space.sample()
         observation, reward, terminated, truncated, info = env.step(action)
-        reward_info = info["reward"]
+        ri = info["reward"]
 
-        print(
-            "Step "
-            f"{step_index}: reward={reward:.4f}, "
-            f"terminated={terminated}, truncated={truncated}, "
-            f"progress_delta_m={reward_info['progress_delta_m']:.4f}, "
-            f"progress_reward={reward_info['progress_reward']:.4f}, "
-            f"speed_reward={reward_info['speed_reward']:.4f}, "
-            f"heading_penalty={reward_info['heading_penalty']:.4f}, "
-            f"lateral_penalty={reward_info['lateral_penalty']:.4f}, "
-            f"total_reward={reward_info['total_reward']:.4f}"
+        base = (
+            f"Step {step_index}: reward={reward:.4f}  "
+            f"progress={ri['progress_reward']:.4f}  "
+            f"heading_pen={ri['heading_penalty']:.4f}  "
+            f"lateral_pen={ri['lateral_penalty']:.4f}"
         )
+        extras = "  ".join(
+            f"{k}={ri[k]:.4f}" for k in V21_KEYS if k in ri and ri[k] != 0.0
+        )
+        print(base + (f"  [{extras}]" if extras else ""))
 
         if terminated or truncated:
             break

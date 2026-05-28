@@ -154,12 +154,20 @@ def main() -> None:
     parser.add_argument("--run", metavar="NAME", help="Run name to evaluate.")
     parser.add_argument("--steps", type=int, default=DEFAULT_EVAL_STEPS,
                         help="Max rollout steps per model.")
+    parser.add_argument("--port", metavar="PORT", type=int, default=None,
+                        help="BeamNG.tech RPC port (default: 25252). Must differ per parallel eval.")
+    parser.add_argument("--beamng-user", metavar="PATH", default=None,
+                        help="BeamNG user data folder. Required for a second parallel instance.")
     args = parser.parse_args()
 
     rm = RunManager()
 
     if args.run and args.run_name and args.run != args.run_name:
         sys.exit("Use either positional RUN or --run NAME, not both.")
+
+    from beamng_rl.bootstrap.beamng_setup import PORT as _DEFAULT_PORT
+    port = args.port if args.port is not None else _DEFAULT_PORT
+    beamng_user = args.beamng_user or None
 
     run_name = args.run or args.run_name or rm.find_latest_run()
     if run_name is None:
@@ -221,6 +229,8 @@ def main() -> None:
             progress_jump_penalty=progress_jump_penalty,
             max_damage=max_damage,
             wall_bash_steps_limit=wall_bash_steps_limit,
+            beamng_port=port,
+            **({"beamng_user": beamng_user} if beamng_user is not None else {}),
         )
 
         for model_path, timestep in models:
