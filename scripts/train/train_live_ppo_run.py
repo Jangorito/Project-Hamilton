@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -70,6 +71,15 @@ def _load_session_config() -> dict:
         return json.loads(_SESSION_CONFIG_PATH.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _save_session_config(config: dict) -> None:
+    try:
+        import json
+        _SESSION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SESSION_CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +129,88 @@ CAR_RUN_SUFFIXES = {
     "sbr": "subaru",
     "etkc": "etk",
 }
+_STEP_SUFFIX_RE = re.compile(r"_\d+(?:k|m)?steps$", re.IGNORECASE)
+
+
+def _parse_timesteps(value, default: int = TOTAL_TIMESTEPS) -> int:
+    try:
+        timesteps = int(value if value is not None else default)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("total_timesteps must be a positive integer") from exc
+    if timesteps < 1:
+        raise ValueError("total_timesteps must be a positive integer")
+    return timesteps
+
+
+def _format_step_suffix(total_timesteps: int) -> str:
+    if total_timesteps % 1_000_000 == 0:
+        return f"{total_timesteps // 1_000_000}msteps"
+    if total_timesteps % 1_000 == 0:
+        return f"{total_timesteps // 1_000}ksteps"
+    return f"{total_timesteps}steps"
+
+
+def _ensure_step_suffix(run_name: str, total_timesteps: int) -> str:
+    base = _STEP_SUFFIX_RE.sub("", run_name.strip())
+    suffix = _format_step_suffix(total_timesteps)
+    return f"{base}_{suffix}" if base else suffix
+
+
+def _retarget_run_step_suffix(
+    rm: RunManager,
+    run_name: str,
+    requested_timesteps: int,
+    actual_timesteps: int,
+) -> str:
+    if actual_timesteps >= requested_timesteps or actual_timesteps < 1:
+        return run_name
+
+    new_run_name = _ensure_step_suffix(run_name, actual_timesteps)
+    if new_run_name == run_name:
+        return run_name
+
+    old_run_dir = rm.run_dir(run_name)
+    new_run_dir = rm.run_dir(new_run_name)
+    old_log_dir = rm.log_dir(run_name)
+    new_log_dir = rm.log_dir(new_run_name)
+
+    if new_run_dir.exists() or new_log_dir.exists():
+        print(
+            f"Warning: early-stop run name '{new_run_name}' already exists; "
+            f"keeping '{run_name}'."
+        )
+        return run_name
+
+    run_moved = False
+    log_moved = False
+    try:
+        if old_run_dir.exists():
+            new_run_dir.parent.mkdir(parents=True, exist_ok=True)
+            old_run_dir.rename(new_run_dir)
+            run_moved = True
+        if old_log_dir.exists():
+            new_log_dir.parent.mkdir(parents=True, exist_ok=True)
+            old_log_dir.rename(new_log_dir)
+            log_moved = True
+    except OSError as exc:
+        print(f"Warning: could not rename early-stop run to '{new_run_name}': {exc}")
+        if run_moved and new_run_dir.exists() and not old_run_dir.exists():
+            try:
+                new_run_dir.rename(old_run_dir)
+            except OSError:
+                pass
+        if log_moved and new_log_dir.exists() and not old_log_dir.exists():
+            try:
+                new_log_dir.rename(old_log_dir)
+            except OSError:
+                pass
+        return run_name
+
+    print(
+        f"Renamed early-stop run: {run_name} -> {new_run_name} "
+        f"({actual_timesteps:,}/{requested_timesteps:,} timesteps)"
+    )
+    return new_run_name
 
 
 # ---------------------------------------------------------------------------
@@ -245,9 +337,10 @@ def _ensure_car_suffix(
     vehicle_model: str,
     reward_key: str,
     speed_factor: int | None = None,
+    total_timesteps: int | None = None,
 ) -> str:
     suffix = CAR_RUN_SUFFIXES[vehicle_model]
-    base = run_name.strip() or f"{reward_key}_{suffix}"
+    base = _STEP_SUFFIX_RE.sub("", run_name.strip() or f"{reward_key}_{suffix}")
     tokens = base.lower().replace("-", "_").split("_")
     if suffix not in tokens:
         base = f"{base}_{suffix}"
@@ -256,6 +349,8 @@ def _ensure_car_suffix(
     speed_suffix = f"{speed_value}x"
     if speed_value > 1 and speed_suffix not in tokens:
         base = f"{base}_{speed_suffix}"
+    if total_timesteps is not None:
+        base = _ensure_step_suffix(base, total_timesteps)
     return base
 
 
@@ -322,7 +417,10 @@ def main() -> None:
 
     # CLI args take precedence over launcher session config.
     session = _load_session_config()
-    total_timesteps = int(session.get("total_timesteps", TOTAL_TIMESTEPS))
+    try:
+        total_timesteps = _parse_timesteps(session.get("total_timesteps", TOTAL_TIMESTEPS))
+    except ValueError as exc:
+        sys.exit(f"Error: {exc}")
     vehicle_model   = str(session.get("car", "etkc")).strip().lower()
     if vehicle_model not in ("sbr", "etkc"):
         sys.exit("Error: unknown car in launcher_session.json. Valid values: sbr, etkc")
@@ -376,6 +474,7 @@ def main() -> None:
             vehicle_model,
             reward_key,
             speed_factor,
+            total_timesteps,
         )
         if rm.exists(run_name):
             sys.exit(
@@ -490,6 +589,26 @@ def main() -> None:
                 StopSignalCallback(_STOP_SIGNAL_FILE),
             ],
         )
+        actual_timesteps = int(getattr(model, "num_timesteps", total_timesteps))
+        if actual_timesteps < total_timesteps:
+            try:
+                model.logger.close()
+            except Exception:
+                pass
+            renamed_run = _retarget_run_step_suffix(
+                rm,
+                run_name,
+                requested_timesteps=total_timesteps,
+                actual_timesteps=actual_timesteps,
+            )
+            if renamed_run != run_name:
+                run_name = renamed_run
+                checkpoint_dir = rm.checkpoint_dir(run_name)
+                log_dir = rm.log_dir(run_name)
+                rollout_path = log_dir / "rollout_final.csv"
+                if session:
+                    session["run_name"] = run_name
+                    _save_session_config(session)
         _PROGRESS_FILE.unlink(missing_ok=True)
         _STOP_SIGNAL_FILE.unlink(missing_ok=True)
 
@@ -503,6 +622,8 @@ def main() -> None:
         )
 
         results = {
+            "actual_timesteps": actual_timesteps,
+            "requested_timesteps": total_timesteps,
             "rollout_progress_m": f"{progress_m:.1f}",
             "termination_reason": reason,
             "progress_jumps": jumps,
@@ -512,6 +633,7 @@ def main() -> None:
         rm.finalize_run(run_name, results)
 
         print("\n=== Summary ===")
+        print(f"  Timesteps   : {actual_timesteps:,}/{total_timesteps:,}")
         print(f"  Progress    : {progress_m:.1f} m  (heuristic ~965 m / lap ~2158 m)")
         print(f"  Termination : {reason}")
         print(f"  Jumps       : {jumps}")
