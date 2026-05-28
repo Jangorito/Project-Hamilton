@@ -89,10 +89,53 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="BeamNG aiRace-style randomization scale. Default: 0.",
     )
     parser.add_argument(
+        "--speed-profile",
+        choices=["curvature", "constant"],
+        default="curvature",
+        help="Speed targets sent to vehicle.ai.set_line. Default: curvature.",
+    )
+    parser.add_argument(
         "--line-speed",
         type=float,
-        default=45.0,
-        help="Per-point speed sent to vehicle.ai.set_line, in m/s. Default: 45.",
+        default=28.0,
+        help="Constant speed in m/s when --speed-profile constant is used. Default: 28.",
+    )
+    parser.add_argument(
+        "--max-line-speed",
+        type=float,
+        default=32.0,
+        help="Maximum curvature-profile line speed in m/s. Default: 32.",
+    )
+    parser.add_argument(
+        "--min-line-speed",
+        type=float,
+        default=8.0,
+        help="Minimum curvature-profile line speed in m/s. Default: 8.",
+    )
+    parser.add_argument(
+        "--curvature-speed-scale",
+        type=float,
+        default=700.0,
+        help="Speed reduction per 1/m of upcoming curvature. Default: 700.",
+    )
+    parser.add_argument(
+        "--start-ramp-m",
+        type=float,
+        default=150.0,
+        help="Distance used to ramp from min speed after the start line. Default: 150.",
+    )
+    parser.add_argument(
+        "--retry-speed-factors",
+        nargs="+",
+        type=float,
+        default=[1.0, 0.85, 0.70],
+        help="Per-attempt multipliers for max/constant line speed. Default: 1.0 0.85 0.70.",
+    )
+    parser.add_argument(
+        "--retry-aggression-step",
+        type=float,
+        default=0.10,
+        help="Aggression reduction after each failed attempt. Default: 0.10.",
     )
     parser.add_argument(
         "--warmup-laps",
@@ -117,6 +160,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=600.0,
         help="Maximum simulated seconds per vehicle/aggression combo. Default: 600.",
+    )
+    parser.add_argument(
+        "--abort-lateral-error",
+        type=float,
+        default=12.0,
+        help="Abort and retry an attempt if lateral error exceeds this many metres. Default: 12.",
+    )
+    parser.add_argument(
+        "--abort-damage",
+        type=float,
+        default=25.0,
+        help="Abort and retry an attempt if total damage exceeds this value. Default: 25.",
+    )
+    parser.add_argument(
+        "--abort-stall-s",
+        type=float,
+        default=5.0,
+        help="Abort and retry after this many seconds with almost no progress. Default: 5.",
     )
     parser.add_argument(
         "--sample-hz",
@@ -234,99 +295,145 @@ def _run_combo(
     print()
     print(f"=== Collecting {combo_label} ===")
 
-    scenario_name = f"ai_raceline_{combo_label}_{os.getpid()}"
-    scenario, vehicle = VEHICLE_BUILDERS[vehicle_model](
-        bng,
-        vehicle_id="ai_reference",
-        scenario_instance_name=scenario_name,
-    )
-
     from beamngpy.sensors import Damage
 
-    vehicle.attach_sensor("damage", Damage())
-    bng.scenario.load(scenario)
-    _try_hide_hud(bng)
-    bng.scenario.start()
-    try:
-        bng.pause()
-    except Exception:
-        pass
-
-    # Prime sensors before the first AI command.
-    _step(bng, 10)
-    _poll_vehicle_state(vehicle)
-
-    ai_line = _build_repeated_ai_line(
-        track,
-        line_speed_mps=float(args.line_speed),
-        laps=max(int(args.max_laps) + 1, 2),
-    )
-    vehicle.ai.set_line(ai_line, cling=False)
-    _apply_ai_race_parameters(
-        vehicle,
-        aggression=aggression,
-        racer_skill=float(args.racer_skill),
-        randomness_scale=float(args.randomness_scale),
-        awareness=False,
-        rubberband=False,
-    )
-    _step(bng, 10)
-
-    samples = _collect_samples(
-        bng,
-        vehicle,
-        track=track,
-        sample_hz=float(args.sample_hz),
-        warmup_laps=int(args.warmup_laps),
-        clean_laps=int(args.clean_laps),
-        max_laps=int(args.max_laps),
-        max_sim_time_s=float(args.max_sim_time),
-    )
-    print(f"Collected {len(samples)} samples.")
-
     combo_log_dir = output_log_dir / combo_label
-    telemetry_path = combo_log_dir / "telemetry.csv"
-    write_telemetry_csv(telemetry_path, samples)
-    print(f"Wrote telemetry: {telemetry_path}")
+    selected_lap = None
+    selected_samples: list[TelemetrySample] = []
+    selected_attempt_metadata: dict[str, Any] = {}
 
-    candidates = segment_laps(
-        samples,
-        track.total_lap_length,
-        warmup_laps=int(args.warmup_laps),
-    )
-    selected_lap = select_fastest_clean_lap(candidates)
-    summary_metadata = {
-        "vehicle": vehicle_model,
-        "aggression": aggression,
-        "racerSkill": float(args.racer_skill),
-        "racerRandomnessScale": float(args.randomness_scale),
-        "racerRubberbandMode": False,
-        "racerAwareness": False,
-        "lineSpeedMps": float(args.line_speed),
-        "centreline": str(args.centreline),
-        "trackLengthM": float(track.total_lap_length),
-    }
-    summary_path = combo_log_dir / "summary.json"
-    write_lap_summary_json(
-        summary_path,
-        candidates=candidates,
-        selected_lap=selected_lap,
-        metadata=summary_metadata,
-    )
-    print(f"Wrote summary: {summary_path}")
-
-    for lap in candidates:
-        status = "clean" if lap.clean else ",".join(lap.rejection_reasons)
-        print(
-            f"lap={lap.lap_number} duration={lap.duration_s:.3f}s "
-            f"avg={lap.average_speed_mps:.3f}m/s status={status}"
+    speed_factors = [float(value) for value in args.retry_speed_factors]
+    for attempt_index, speed_factor in enumerate(speed_factors, start=1):
+        effective_aggression = max(
+            0.50,
+            float(aggression) - (attempt_index - 1) * float(args.retry_aggression_step),
         )
+        attempt_label = f"attempt_{attempt_index}_speed_{_aggression_label(speed_factor)}"
+        attempt_log_dir = combo_log_dir / attempt_label
+        print(
+            f"-- {attempt_label}: speed_factor={speed_factor:.2f}, "
+            f"effective_aggression={effective_aggression:.2f}"
+        )
+
+        scenario_name = f"ai_raceline_{combo_label}_{attempt_index}_{os.getpid()}"
+        scenario, vehicle = VEHICLE_BUILDERS[vehicle_model](
+            bng,
+            vehicle_id="ai_reference",
+            scenario_instance_name=scenario_name,
+        )
+
+        vehicle.attach_sensor("damage", Damage())
+        bng.scenario.load(scenario)
+        _try_hide_hud(bng)
+        bng.scenario.start()
+        try:
+            bng.pause()
+        except Exception:
+            pass
+
+        _step(bng, 10)
+        _poll_vehicle_state(vehicle)
+
+        ai_line = _build_repeated_ai_line(
+            track,
+            speed_profile=str(args.speed_profile),
+            constant_speed_mps=float(args.line_speed) * speed_factor,
+            max_speed_mps=float(args.max_line_speed) * speed_factor,
+            min_speed_mps=float(args.min_line_speed),
+            curvature_speed_scale=float(args.curvature_speed_scale),
+            start_ramp_m=float(args.start_ramp_m),
+            laps=max(int(args.max_laps) + 1, 2),
+        )
+        print(
+            "Line speed range: "
+            f"{min(point['speed'] for point in ai_line):.1f}-"
+            f"{max(point['speed'] for point in ai_line):.1f} m/s"
+        )
+        vehicle.ai.set_line(ai_line, cling=False)
+        _apply_ai_race_parameters(
+            vehicle,
+            aggression=effective_aggression,
+            racer_skill=float(args.racer_skill),
+            randomness_scale=float(args.randomness_scale),
+            awareness=False,
+            rubberband=False,
+        )
+        _step(bng, 10)
+
+        samples = _collect_samples(
+            bng,
+            vehicle,
+            track=track,
+            sample_hz=float(args.sample_hz),
+            warmup_laps=int(args.warmup_laps),
+            clean_laps=int(args.clean_laps),
+            max_laps=int(args.max_laps),
+            max_sim_time_s=float(args.max_sim_time),
+            abort_lateral_error_m=float(args.abort_lateral_error),
+            abort_damage=float(args.abort_damage),
+            abort_stall_s=float(args.abort_stall_s),
+        )
+        print(f"Collected {len(samples)} samples.")
+
+        telemetry_path = attempt_log_dir / "telemetry.csv"
+        write_telemetry_csv(telemetry_path, samples)
+        print(f"Wrote telemetry: {telemetry_path}")
+
+        candidates = segment_laps(
+            samples,
+            track.total_lap_length,
+            warmup_laps=int(args.warmup_laps),
+        )
+        attempt_selected_lap = select_fastest_clean_lap(candidates)
+        summary_metadata = {
+            "vehicle": vehicle_model,
+            "requestedAggression": aggression,
+            "effectiveAggression": effective_aggression,
+            "attempt": attempt_index,
+            "speedFactor": speed_factor,
+            "speedProfile": str(args.speed_profile),
+            "lineSpeedMps": float(args.line_speed),
+            "maxLineSpeedMps": float(args.max_line_speed) * speed_factor,
+            "minLineSpeedMps": float(args.min_line_speed),
+            "curvatureSpeedScale": float(args.curvature_speed_scale),
+            "startRampM": float(args.start_ramp_m),
+            "racerSkill": float(args.racer_skill),
+            "racerRandomnessScale": float(args.randomness_scale),
+            "racerRubberbandMode": False,
+            "racerAwareness": False,
+            "centreline": str(args.centreline),
+            "trackLengthM": float(track.total_lap_length),
+        }
+        summary_path = attempt_log_dir / "summary.json"
+        write_lap_summary_json(
+            summary_path,
+            candidates=candidates,
+            selected_lap=attempt_selected_lap,
+            metadata=summary_metadata,
+        )
+        print(f"Wrote summary: {summary_path}")
+
+        for lap in candidates:
+            status = "clean" if lap.clean else ",".join(lap.rejection_reasons)
+            print(
+                f"lap={lap.lap_number} duration={lap.duration_s:.3f}s "
+                f"avg={lap.average_speed_mps:.3f}m/s status={status}"
+            )
+
+        if attempt_selected_lap is not None:
+            selected_lap = attempt_selected_lap
+            selected_samples = samples
+            selected_attempt_metadata = summary_metadata
+            print(f"Selected lap from {attempt_label}.")
+            break
+
+        print(f"No clean lap for {attempt_label}; retrying with safer settings if available.")
 
     if selected_lap is None:
         print(f"No clean lap found for {combo_label}; final raceline JSONs were not exported.")
         return
 
-    lap_samples = samples_for_lap(samples, selected_lap, track.total_lap_length)
+    lap_samples = samples_for_lap(selected_samples, selected_lap, track.total_lap_length)
     static_points = build_static_speed_raceline(track, lap_samples)
     driven_points = build_driven_speed_raceline(
         track,
@@ -336,7 +443,15 @@ def _run_combo(
 
     export_metadata = {
         "vehicle": vehicle_model,
-        "aggression": aggression,
+        "requestedAggression": aggression,
+        "effectiveAggression": selected_attempt_metadata.get("effectiveAggression", aggression),
+        "attempt": selected_attempt_metadata.get("attempt"),
+        "speedFactor": selected_attempt_metadata.get("speedFactor"),
+        "speedProfile": selected_attempt_metadata.get("speedProfile"),
+        "maxLineSpeedMps": selected_attempt_metadata.get("maxLineSpeedMps"),
+        "minLineSpeedMps": selected_attempt_metadata.get("minLineSpeedMps"),
+        "curvatureSpeedScale": selected_attempt_metadata.get("curvatureSpeedScale"),
+        "startRampM": selected_attempt_metadata.get("startRampM"),
         "racerSkill": float(args.racer_skill),
         "racerRandomnessScale": float(args.randomness_scale),
         "racerRubberbandMode": False,
@@ -391,6 +506,9 @@ def _collect_samples(
     clean_laps: int,
     max_laps: int,
     max_sim_time_s: float,
+    abort_lateral_error_m: float,
+    abort_damage: float,
+    abort_stall_s: float,
 ) -> list[TelemetrySample]:
     frames_per_sample = max(1, int(round(60.0 / max(sample_hz, 1.0e-6))))
     dt_s = frames_per_sample / 60.0
@@ -401,6 +519,7 @@ def _collect_samples(
     target_unwrapped: float | None = None
     sim_time_s = 0.0
     completed_lap_floor = -1
+    stall_run_s = 0.0
 
     while sim_time_s <= max_sim_time_s:
         _step(bng, frames_per_sample)
@@ -424,6 +543,7 @@ def _collect_samples(
             previous_unwrapped_progress_m=previous_unwrapped,
             total_lap_length_m=track.total_lap_length,
         )
+        progress_delta = 0.0 if previous_unwrapped is None else unwrapped - previous_unwrapped
         if initial_unwrapped is None:
             initial_unwrapped = unwrapped
             target_unwrapped = initial_unwrapped + max_laps * track.total_lap_length
@@ -443,6 +563,26 @@ def _collect_samples(
         samples.append(sample)
         previous_raw = raw_progress
         previous_unwrapped = unwrapped
+
+        if abs(sample.lateral_error_m) > abort_lateral_error_m:
+            print(
+                "Aborting attempt: lateral error exceeded "
+                f"{abort_lateral_error_m:.1f} m ({sample.lateral_error_m:.1f} m)."
+            )
+            break
+        if sample.damage > abort_damage:
+            print(
+                f"Aborting attempt: damage exceeded {abort_damage:.1f} "
+                f"({sample.damage:.1f})."
+            )
+            break
+        if sim_time_s > 5.0 and progress_delta < 0.05:
+            stall_run_s += dt_s
+        else:
+            stall_run_s = 0.0
+        if stall_run_s > abort_stall_s:
+            print(f"Aborting attempt: stalled for {stall_run_s:.1f} s.")
+            break
 
         if len(samples) % max(1, int(sample_hz * 5)) == 0:
             print(
@@ -511,16 +651,61 @@ def _apply_ai_race_parameters(
 def _build_repeated_ai_line(
     track: TrackCentreline,
     *,
-    line_speed_mps: float,
+    speed_profile: str,
+    constant_speed_mps: float,
+    max_speed_mps: float,
+    min_speed_mps: float,
+    curvature_speed_scale: float,
+    start_ramp_m: float,
     laps: int,
 ) -> list[dict[str, Any]]:
     points = [tuple(map(float, xyz)) for xyz in track.points_xyz]
+    speeds = [
+        _line_speed_for_progress(
+            track,
+            progress_m=float(track.cumulative_arc_lengths[index]),
+            speed_profile=speed_profile,
+            constant_speed_mps=constant_speed_mps,
+            max_speed_mps=max_speed_mps,
+            min_speed_mps=min_speed_mps,
+            curvature_speed_scale=curvature_speed_scale,
+            start_ramp_m=start_ramp_m,
+        )
+        for index in range(len(points))
+    ]
     line: list[dict[str, Any]] = []
     for _ in range(max(1, int(laps))):
-        for point in points:
-            line.append({"pos": point, "speed": float(line_speed_mps)})
-    line.append({"pos": points[0], "speed": float(line_speed_mps)})
+        for point, speed in zip(points, speeds):
+            line.append({"pos": point, "speed": float(speed)})
+    line.append({"pos": points[0], "speed": float(speeds[0])})
     return line
+
+
+def _line_speed_for_progress(
+    track: TrackCentreline,
+    *,
+    progress_m: float,
+    speed_profile: str,
+    constant_speed_mps: float,
+    max_speed_mps: float,
+    min_speed_mps: float,
+    curvature_speed_scale: float,
+    start_ramp_m: float,
+) -> float:
+    min_speed = max(0.1, float(min_speed_mps))
+    if speed_profile == "constant":
+        return max(min_speed, float(constant_speed_mps))
+
+    max_speed = max(min_speed, float(max_speed_mps))
+    max_curvature_ahead = max(
+        track.curvature_at(progress_m + lookahead_m)
+        for lookahead_m in (20.0, 40.0, 80.0)
+    )
+    target_speed = max(min_speed, max_speed - float(curvature_speed_scale) * max_curvature_ahead)
+    if start_ramp_m > 0.0:
+        ramp = min(1.0, max(0.0, float(progress_m) / float(start_ramp_m)))
+        target_speed = min_speed + (target_speed - min_speed) * ramp
+    return float(target_speed)
 
 
 def _poll_vehicle_state(vehicle: Any) -> dict[str, Any]:
