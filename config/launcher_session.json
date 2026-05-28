@@ -1,13 +1,14 @@
 {
   "car": "sbr",
   "car_label": "SBR4 Track",
-  "run_name": "v1_subaru_4x_8ksteps",
+  "run_name": "v21b_subaru_16x_278ksteps",
   "fresh": true,
-  "total_timesteps": 8000,
+  "total_timesteps": 278000,
   "stream": true,
   "max_damage": 500.0,
-  "speed_factor": 4,
+  "speed_factor": 16,
   "timing_profile": "det50ms",
-  "reward_config": "v1",
-  "debug_mode": false
+  "reward_config": "v21b",
+  "debug_mode": false,
+  "prev_max_damage": 500.0
 }

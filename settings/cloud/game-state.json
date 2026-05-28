@@ -1,0 +1,11 @@
+{
+  "lastLevelName":"hirochi_raceway",
+  "levels":{
+    "automation_test_track":{
+      "defaultSpawnPointName":"spawns_startingline"
+    },
+    "hirochi_raceway":{
+      "defaultSpawnPointName":"spawn_startline"
+    }
+  }
+}
