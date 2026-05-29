@@ -55,6 +55,7 @@ CAR_RUN_SUFFIXES = {
 SPEED_FACTORS = {1, 2, 4, 8, 16, 32}
 TIMING_PROFILES = {"legacy_60hz", "det50ms"}
 REWARD_CONFIG_KEYS = {"v1", "v2", "v21a", "v21b"}
+SPAWN_MODES = {"bootstrap", "random_checkpoint"}
 
 PYTHON_EXE = REPO_ROOT / "venv" / "Scripts" / "python.exe"
 if not PYTHON_EXE.exists():
@@ -407,6 +408,7 @@ def _ensure_car_suffix(
     reward_config: str,
     speed_factor: int = 1,
     total_timesteps: int | None = None,
+    spawn_mode: str = "bootstrap",
 ) -> str:
     suffix = CAR_RUN_SUFFIXES[car]
     base = _STEP_SUFFIX_RE.sub("", run_name.strip() or f"{reward_config}_{suffix}")
@@ -417,6 +419,9 @@ def _ensure_car_suffix(
     speed_suffix = f"{speed_factor}x"
     if speed_factor > 1 and speed_suffix not in tokens:
         base = f"{base}_{speed_suffix}"
+        tokens = base.lower().replace("-", "_").split("_")
+    if spawn_mode == "random_checkpoint" and "respawn" not in tokens:
+        base = f"{base}_respawn"
     if total_timesteps is not None:
         base = _ensure_step_suffix(base, total_timesteps)
     return base
@@ -499,6 +504,7 @@ def api_status():
         "speed_factor": speed_factor,
         "timing_profile": timing_profile,
         "reward_config": session.get("reward_config", "v1"),
+        "spawn_mode": session.get("spawn_mode", "bootstrap"),
         "car": car,
         "car_label": CAR_LABELS.get(car, car),
     })
@@ -582,6 +588,12 @@ def api_launch():
             "ok": False,
             "message": f"Unknown reward config {reward_config!r}. Choose one of: {sorted(REWARD_CONFIG_KEYS)}",
         }), 400
+    spawn_mode = str(data.get("spawn_mode", "bootstrap")).strip().lower()
+    if spawn_mode not in SPAWN_MODES:
+        return jsonify({
+            "ok": False,
+            "message": f"Unknown spawn mode {spawn_mode!r}. Choose one of: {sorted(SPAWN_MODES)}",
+        }), 400
     timing_profile = _fresh_timing_profile(speed_factor)
     debug_mode = bool(data.get("debug_mode", False))
 
@@ -598,6 +610,7 @@ def api_launch():
             "speed_factor": speed_factor,
             "timing_profile": timing_profile,
             "reward_config": reward_config,
+            "spawn_mode": spawn_mode,
         })
         _save_session_config(session)
         obs_ok, obs_message = _obs_action("start")
@@ -609,7 +622,7 @@ def api_launch():
         return jsonify({"ok": True, "message": "BeamNG launched standalone."})
 
     if fresh:
-        run_name = _ensure_car_suffix(run_name, car, reward_config, speed_factor, timesteps)
+        run_name = _ensure_car_suffix(run_name, car, reward_config, speed_factor, timesteps, spawn_mode)
     else:
         resume_name = run_name or rm.find_latest_run()
         if not resume_name:
@@ -650,6 +663,7 @@ def api_launch():
         "speed_factor": speed_factor,
         "timing_profile": timing_profile,
         "reward_config": reward_config,
+        "spawn_mode": spawn_mode,
         "debug_mode": debug_mode,
     })
     _save_session_config(session)
@@ -667,13 +681,14 @@ def api_launch():
     )
     if result.returncode != 0:
         return jsonify({"ok": False, "message": f"schtasks failed: {result.stderr.strip()}"}), 500
+    spawn_label = " · respawn" if spawn_mode == "random_checkpoint" else ""
     stream_label = " with OBS stream" if stream else ""
     obs_warning = "" if obs_ok else f" OBS warning: {obs_message}"
     return jsonify({
         "ok": True,
         "message": (
             f"Training started: {CAR_LABELS[car]}, {timesteps:,} steps, "
-            f"{speed_factor}x speed, reward {reward_config}{stream_label}.{obs_warning}"
+            f"{speed_factor}x speed, reward {reward_config}{spawn_label}{stream_label}.{obs_warning}"
         ),
     })
 
