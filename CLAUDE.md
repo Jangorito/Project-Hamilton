@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-**Project Hamilton** — a PPO-based autonomous racing agent trained inside BeamNG.tech (soft-body physics simulator) on Hirochi Raceway. The research question is a 2×2 factorial: how do vehicle dynamics (ETK K-Series vs SBR4) and reward function design (V1 vs V2.1) independently affect learning? V2.1 replaces V1's hand-tuned linear curvature penalty with a physics-informed reward grounded in traction-budget theory (Beckman's *Physics of Racing*). Additional research avenues (checkpoint respawning, racing line reward, behavioural cloning) are in `TODO.md`.
+**Project Hamilton** — a PPO-based autonomous racing agent trained inside BeamNG.tech (soft-body physics simulator) on Hirochi Raceway. The research question is a 2×2 factorial: how do vehicle dynamics (ETK K-Series vs SBR4) and reward function design (V1 vs V2.1) independently affect learning? V2.1 replaces V1's hand-tuned linear curvature penalty with a physics-informed reward grounded in traction-budget theory (Beckman's *Physics of Racing*). Additional research avenues (checkpoint respawning ✅ implemented, racing line reward, behavioural cloning) are in `TODO.md`.
 
 ---
 
@@ -49,6 +49,7 @@ python src\beamng_rl\track\query_utils.py
 python scripts\train\train_live_ppo_run.py --fresh --run-name v1_etk_v2
 python scripts\train\train_live_ppo_run.py                                   # resume latest
 python scripts\train\train_live_ppo_run.py --fresh --car etkc --reward-config v2
+python scripts\train\train_live_ppo_run.py --fresh --car etkc --reward-config v2 --spawn-mode random_checkpoint  # spawn at random centreline point each reset; adds _respawn token to run name
 
 # Parallel second instance (different port + user folder)
 python scripts\train\train_live_ppo_run.py --fresh --run-name cond_C --car etkc --reward-config v2 --port 25253 --beamng-user "C:\Users\Jango\AppData\Local\BeamNG_w2" --session-file config\launcher_session_2.json --progress-file logs\remote\current_steps_2.txt --stop-signal-file logs\remote\stop_signal_2.txt
@@ -247,7 +248,7 @@ Override the slot 2 user folder with `$env:BEAMNG_USER_SLOT2` before starting Fl
 
 ## Config / session handoff
 
-The Flask launcher writes `config/launcher_session.json` (slot 1) or `config/launcher_session_2.json` (slot 2) before spawning the training script. Keys: `car`, `total_timesteps`, `speed_factor`, `timing_profile`, `reward_config`, `fresh`, `run_name`, `max_damage`, `debug_mode`, `port`, `beamng_user`.
+The Flask launcher writes `config/launcher_session.json` (slot 1) or `config/launcher_session_2.json` (slot 2) before spawning the training script. Keys: `car`, `total_timesteps`, `speed_factor`, `timing_profile`, `reward_config`, `fresh`, `run_name`, `max_damage`, `debug_mode`, `port`, `beamng_user`, `spawn_mode` (`"bootstrap"` | `"random_checkpoint"`).
 
 The training script enforces a vehicle-metadata guard on resume: if `run_config.json` records a different vehicle than the session config requests, training aborts rather than silently cross-contaminating weights.
 
