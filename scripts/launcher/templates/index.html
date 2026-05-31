@@ -768,6 +768,37 @@
               <div class="radio-sub">V2.1-A + braking shortfall anticipation</div>
             </div>
           </label>
+          <label class="radio-option" data-group="reward" data-value="v22">
+            <input type="radio" name="reward" value="v22">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2.2 — Racing line</div>
+              <div class="radio-sub">Physics raceline lateral ref + speed profile target</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Obs Config -->
+      <div class="panel-section" id="obs-section">
+        <div class="section-label">Observation Config</div>
+        <div class="radio-group" id="obs-group">
+          <label class="radio-option selected" data-group="obs" data-value="v1">
+            <input type="radio" name="obs" value="v1" checked>
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">Obs V1 — Baseline (12 features)</div>
+              <div class="radio-sub">Speed · heading · lateral · lookahead · curvature · progress</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="obs" data-value="v2">
+            <input type="radio" name="obs" value="v2">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">Obs V2 — Prev Action (14 features)</div>
+              <div class="radio-sub">Obs V1 + prev steer + prev throttle · reduces steering oscillation</div>
+            </div>
+          </label>
         </div>
       </div>
 
@@ -913,6 +944,28 @@
         <div class="panel-section">
           <div class="section-label">Max Episode Steps</div>
           <input type="number" class="input" id="eval-steps" value="500" min="50" max="5000" step="50">
+        </div>
+
+        <div class="panel-section">
+          <div class="section-label">Replay Speed</div>
+          <div class="radio-group" id="watch-speed-group">
+            <label class="radio-option selected" data-group="watch-speed" data-value="1">
+              <input type="radio" name="watch-speed" value="1" checked>
+              <div class="radio-dot"></div>
+              <div>
+                <div class="radio-name">1× — Real time</div>
+                <div class="radio-sub">Watchable · use for recording</div>
+              </div>
+            </label>
+            <label class="radio-option" data-group="watch-speed" data-value="0">
+              <input type="radio" name="watch-speed" value="0">
+              <div class="radio-dot"></div>
+              <div>
+                <div class="radio-name">Training speed</div>
+                <div class="radio-sub">Matches run config · faster eval</div>
+              </div>
+            </label>
+          </div>
         </div>
 
         <div class="divider"></div>
@@ -1096,6 +1149,50 @@
         </div>
       </div>
 
+      <div class="panel-section">
+        <div class="section-label">Observation Config</div>
+        <div class="radio-group" id="obs-group-2">
+          <label class="radio-option selected" data-group="obs-2" data-value="v1">
+            <input type="radio" name="obs-2" value="v1" checked>
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">Obs V1 — Baseline (12 features)</div>
+              <div class="radio-sub">Speed · heading · lateral · lookahead · curvature · progress</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="obs-2" data-value="v2">
+            <input type="radio" name="obs-2" value="v2">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">Obs V2 — Prev Action (14 features)</div>
+              <div class="radio-sub">Obs V1 + prev steer + prev throttle · reduces steering oscillation</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">Spawn Mode</div>
+        <div class="radio-group" id="spawn-group-2">
+          <label class="radio-option selected" data-group="spawn-2" data-value="bootstrap">
+            <input type="radio" name="spawn-2" value="bootstrap" checked>
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">Fixed Start</div>
+              <div class="radio-sub">Bootstrap pose · known-good start marker</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="spawn-2" data-value="random_checkpoint">
+            <input type="radio" name="spawn-2" value="random_checkpoint">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">Random Spawn</div>
+              <div class="radio-sub">Uniform random position each reset · generalisation</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
       <div class="panel-section" id="run-section-2">
         <div class="section-label">Run</div>
         <div class="run-row">
@@ -1227,6 +1324,7 @@ let userTouchedCar = false;
 let userTouchedSpeed = false;
 let userTouchedReward = false;
 let userTouchedSpawn = false;
+let userTouchedObs = false;
 let runDetails = {};
 const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
@@ -1306,12 +1404,16 @@ function initRadioGroups() {
         userTouchedSpawn = true;
         updateFreshNameSuggestion();
       }
+      if (group === 'obs') {
+        userTouchedObs = true;
+      }
+      if (group === 'watch-speed') { /* no extra action needed */ }
     });
   });
 }
 
 function onModeChange(mode) {
-  const trainingOnly = ['reward-section', 'spawn-section', 'run-section', 'steps-section', 'speed-section', 'stream-section'];
+  const trainingOnly = ['reward-section', 'obs-section', 'spawn-section', 'run-section', 'steps-section', 'speed-section', 'stream-section'];
   trainingOnly.forEach(id => {
     document.getElementById(id).style.display =
       (mode === 'training') ? '' : 'none';
@@ -1424,6 +1526,11 @@ function selectedSpawnMode() {
   return document.querySelector('input[name="spawn"]:checked').value;
 }
 
+function selectedObsConfig() {
+  const el = document.querySelector('input[name="obs"]:checked');
+  return el ? el.value : 'v1';
+}
+
 function setSpawnMode(key) {
   document.querySelectorAll('.radio-option[data-group="spawn"]').forEach(el => {
     const match = el.dataset.value === key;
@@ -1449,16 +1556,13 @@ function suggestedFreshRunName() {
   const suffix = CAR_RUN_SUFFIXES[selectedCar()] || selectedCar();
   const speed = selectedSpeedFactor();
   const speedSuffix = speed > 1 ? `_${speed}x` : '';
+  const obsSuffix = selectedObsConfig() === 'v2' ? '_obs2' : '';
   const spawnSuffix = selectedSpawnMode() === 'random_checkpoint' ? '_respawn' : '';
-  return `${selectedRewardConfig()}_${suffix}${speedSuffix}${spawnSuffix}_${formatStepSuffix(selectedTimesteps())}`;
+  return `${selectedRewardConfig()}_${suffix}${speedSuffix}${obsSuffix}${spawnSuffix}_${formatStepSuffix(selectedTimesteps())}`;
 }
 
 function isAutoFreshRunName(value) {
-<<<<<<< HEAD
-  return /^(v1|v2|v21a|v21b)_(subaru|etk)(_(2|4|8|16|32)x)?(_\d+(k|m)?steps)?$/i.test(value.trim());
-=======
-  return /^(v1|v2)_(subaru|etk)(_(2|4|8|16|32)x)?(_respawn)?(_\d+(k|m)?steps)?$/i.test(value.trim());
->>>>>>> claude/random-spawn-point-todo-2SITA
+  return /^(v1|v2|v21a|v21b)_(subaru|etk)(_(2|4|8|16|32)x)?(_obs2)?(_respawn)?(_\d+(k|m)?steps)?$/i.test(value.trim());
 }
 
 function updateFreshNameSuggestion() {
@@ -1599,6 +1703,13 @@ async function pollStatus() {
     // Restore speed factor, reward config, spawn mode from last saved session
     if (!isTraining && d.speed_factor != null && !userTouchedSpeed) setSpeedSliderFromValue(d.speed_factor);
     if (!isTraining && d.reward_config != null && !userTouchedReward) setRewardConfig(d.reward_config);
+    if (!isTraining && d.obs_config != null && !userTouchedObs) {
+      document.querySelectorAll('.radio-option[data-group="obs"]').forEach(el => {
+        const match = el.dataset.value === d.obs_config;
+        el.classList.toggle('selected', match);
+        el.querySelector('input[type="radio"]').checked = match;
+      });
+    }
     if (!isTraining && d.spawn_mode != null && !userTouchedSpawn) setSpawnMode(d.spawn_mode);
     if (!isTraining && d.car != null && !userTouchedCar) setCarSelection(d.car);
 
@@ -1667,7 +1778,7 @@ async function launch() {
     const r = await fetch('/api/launch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig, spawn_mode: spawnMode, debug_mode: debug }),
+      body: JSON.stringify({ car, mode, run_name: runName, fresh, timesteps, stream, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig, obs_config: selectedObsConfig(), spawn_mode: spawnMode, debug_mode: debug }),
     });
     const d = await r.json();
     toast(d.message, d.ok ? 'success' : 'error');
@@ -1858,7 +1969,7 @@ async function startWatch() {
     const r = await fetch('/api/watch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ run_name: runName, checkpoint, steps }),
+      body: JSON.stringify({ run_name: runName, checkpoint, steps, watch_speed: parseInt(document.querySelector('input[name="watch-speed"]:checked').value) }),
     });
     const d = await r.json();
     toast(d.message, d.ok ? 'success' : 'error');
@@ -1967,6 +2078,8 @@ let isTraining2 = false;
 let userTouchedCar2 = false;
 let userTouchedSpeed2 = false;
 let userTouchedReward2 = false;
+let userTouchedObs2 = false;
+let userTouchedSpawn2 = false;
 
 // ── Run 2 init ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -1981,7 +2094,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initRadioGroups2() {
-  document.querySelectorAll('.radio-option[data-group^="car-2"],.radio-option[data-group^="reward-2"],.radio-option[data-group^="run_mode-2"]').forEach(el => {
+  document.querySelectorAll('.radio-option[data-group^="car-2"],.radio-option[data-group^="reward-2"],.radio-option[data-group^="obs-2"],.radio-option[data-group^="spawn-2"],.radio-option[data-group^="run_mode-2"]').forEach(el => {
     el.addEventListener('click', () => {
       const group = el.dataset.group;
       document.querySelectorAll(`.radio-option[data-group="${group}"]`)
@@ -1990,6 +2103,8 @@ function initRadioGroups2() {
       el.querySelector('input[type="radio"]').checked = true;
       if (group === 'car-2') { userTouchedCar2 = true; updateFreshNameSuggestion2(); }
       if (group === 'reward-2') { userTouchedReward2 = true; updateFreshNameSuggestion2(); }
+      if (group === 'obs-2') { userTouchedObs2 = true; updateFreshNameSuggestion2(); }
+      if (group === 'spawn-2') { userTouchedSpawn2 = true; updateFreshNameSuggestion2(); }
       if (group === 'run_mode-2') onRunModeChange2(el.dataset.value);
     });
   });
@@ -2016,6 +2131,11 @@ function selectedRewardConfig2() {
   return el ? el.value : 'v1';
 }
 
+function selectedObsConfig2() {
+  const el = document.querySelector('input[name="obs-2"]:checked');
+  return el ? el.value : 'v1';
+}
+
 function selectedRunMode2() {
   const el = document.querySelector('input[name="run_mode-2"]:checked');
   return el ? el.value : 'resume';
@@ -2032,11 +2152,18 @@ function selectedTimesteps2() {
     ?? DEFAULT_TIMESTEPS;
 }
 
+function selectedSpawnMode2() {
+  const el = document.querySelector('input[name="spawn-2"]:checked');
+  return el ? el.value : 'bootstrap';
+}
+
 function suggestedFreshRunName2() {
   const suffix = CAR_RUN_SUFFIXES[selectedCar2()] || selectedCar2();
   const speed = selectedSpeedFactor2();
   const speedSuffix = speed > 1 ? `_${speed}x` : '';
-  return `${selectedRewardConfig2()}_${suffix}${speedSuffix}_${formatStepSuffix(selectedTimesteps2())}`;
+  const obsSuffix2 = selectedObsConfig2() === 'v2' ? '_obs2' : '';
+  const spawnSuffix2 = selectedSpawnMode2() === 'random_checkpoint' ? '_respawn' : '';
+  return `${selectedRewardConfig2()}_${suffix}${speedSuffix}${obsSuffix2}${spawnSuffix2}_${formatStepSuffix(selectedTimesteps2())}`;
 }
 
 function updateFreshNameSuggestion2() {
@@ -2209,7 +2336,7 @@ async function launch2() {
     const r = await fetch('/api/2/launch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ car, run_name: runName, fresh, timesteps, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig, debug_mode: debug }),
+      body: JSON.stringify({ car, run_name: runName, fresh, timesteps, max_damage: maxDamage, speed_factor: speedFactor, reward_config: rewardConfig, obs_config: selectedObsConfig2(), spawn_mode: selectedSpawnMode2(), debug_mode: debug }),
     });
     const d = await r.json();
     toast(d.message, d.ok ? 'success' : 'error');
