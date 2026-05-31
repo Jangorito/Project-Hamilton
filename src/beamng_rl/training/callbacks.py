@@ -177,6 +177,10 @@ class BeamNGTrainingHudCallback(BaseCallback):
         self._max_episode_steps = int(max_episode_steps)
         self._full_lap_m = max(1.0, float(full_lap_m))
         self._update_every_steps = max(1, int(update_every_steps))
+        # Re-assert the layout every N steps so it survives scenario reloads
+        # between episodes.  BeamNG wipes the UI layout on each reset.
+        self._layout_reassert_every = 60
+        self._last_layout_step = -1
         self._started_at = 0.0
         self._last_sent_step = -1
         self._episodes_completed = 0
@@ -224,6 +228,14 @@ class BeamNGTrainingHudCallback(BaseCallback):
                 self._termination_counts[reason] += 1
                 self._terminations_total += 1
                 self._episodes_completed += 1
+
+        # Re-assert the HUD layout periodically so it survives BeamNG
+        # scenario reloads that happen on each episode reset.
+        if self.num_timesteps - self._last_layout_step >= self._layout_reassert_every:
+            show_layout = getattr(self._hud, "show_layout", None)
+            if callable(show_layout):
+                show_layout()
+            self._last_layout_step = int(self.num_timesteps)
 
         if (
             self.num_timesteps - self._last_sent_step < self._update_every_steps
@@ -316,6 +328,11 @@ class BeamNGTrainingHudCallback(BaseCallback):
                 "max_episode_steps": self._termination_counts.get("max_episode_steps", 0),
                 "lap_completed": self._termination_counts.get("lap_completed", 0),
             },
+            # V2.1 physics reward diagnostics — None when using v1/v2 configs
+            "traction_budget_penalty": _safe_float(reward_info.get("traction_budget_penalty")) or None,
+            "braking_shortfall_penalty": _safe_float(reward_info.get("braking_shortfall_penalty")) or None,
+            "lateral_risk_ratio": _safe_float(reward_info.get("lateral_risk_ratio")) or None,
+            "physics_target_speed_mps": _safe_float(reward_info.get("physics_target_speed_mps")) or None,
         }
 
         send = getattr(self._hud, "send", None)

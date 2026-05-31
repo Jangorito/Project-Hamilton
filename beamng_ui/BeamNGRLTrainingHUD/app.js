@@ -223,6 +223,8 @@ angular.module('beamng.apps')
             <div class="beamng-rl-hud__row"><span>Last / Avg</span><span>{{ fmtNum(data.reward, 2) }} / {{ fmtNum(data.reward_mean, 2) }}</span></div>
             <div class="beamng-rl-hud__row"><span>Progress</span><span>{{ fmtNum(data.progress_reward, 2) }}</span></div>
             <div class="beamng-rl-hud__row"><span>Speed</span><span>{{ fmtNum(data.speed_reward, 2) }}</span></div>
+            <div class="beamng-rl-hud__row" ng-if="data.traction_budget_penalty > 0"><span>Traction pen</span><span class="beamng-rl-hud__warn">{{ fmtNum(data.traction_budget_penalty, 3) }}</span></div>
+            <div class="beamng-rl-hud__row" ng-if="data.braking_shortfall_penalty > 0"><span>Braking pen</span><span class="beamng-rl-hud__warn">{{ fmtNum(data.braking_shortfall_penalty, 3) }}</span></div>
           </div>
 
           <div class="beamng-rl-hud__panel">
@@ -230,6 +232,8 @@ angular.module('beamng.apps')
             <div class="beamng-rl-hud__row"><span>Steer</span><span>{{ fmtNum(data.steering, 2) }}</span></div>
             <div class="beamng-rl-hud__row"><span>Thr / Brk</span><span>{{ fmtNum(data.throttle, 2) }} / {{ fmtNum(data.brake, 2) }}</span></div>
             <div class="beamng-rl-hud__row"><span>Jumps</span><span ng-class="data.progress_jumps > 0 ? 'beamng-rl-hud__warn' : ''">{{ fmtInt(data.progress_jumps) }}</span></div>
+            <div class="beamng-rl-hud__row" ng-if="data.lateral_risk_ratio != null"><span>Risk ratio</span><span ng-class="data.lateral_risk_ratio > 1 ? 'beamng-rl-hud__bad' : data.lateral_risk_ratio > 0.8 ? 'beamng-rl-hud__warn' : ''">{{ fmtNum(data.lateral_risk_ratio, 2) }}</span></div>
+            <div class="beamng-rl-hud__row" ng-if="data.physics_target_speed_mps != null"><span>Target spd</span><span>{{ fmtNum(data.physics_target_speed_mps * 3.6, 0) }} km/h</span></div>
           </div>
         </div>
       </div>
