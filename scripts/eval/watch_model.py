@@ -71,13 +71,34 @@ def _vehicle_model_for_run(run_name: str | None, rm: RunManager) -> str:
     return vehicle_model
 
 
+def _obs_config_for_run(run_name: str | None, rm: RunManager) -> str:
+    if run_name is None:
+        return "v1"
+    config = rm.load_config(run_name)
+    return str(config.get("obs", {}).get("config_key", "v1"))
+
+
+def _infer_run_from_path(model_path: Path, rm: RunManager) -> str | None:
+    """Try to extract a run name from the model path by matching against known runs."""
+    parts = model_path.parts
+    runs_root = rm.runs_root.resolve()
+    try:
+        resolved = model_path.resolve()
+        rel = resolved.relative_to(runs_root)
+        return rel.parts[0] if rel.parts else None
+    except (ValueError, IndexError):
+        return None
+
+
 def _resolve_model(args: argparse.Namespace, rm: RunManager) -> tuple[Path, str | None]:
     """Return (model_path, run_name). Exits if nothing can be found."""
     if args.model_path:
         p = Path(args.model_path)
         if not p.is_file():
             sys.exit(f"Model not found: {p}")
-        return p, args.run
+        # Prefer explicit --run; fall back to inferring from the path
+        run_name = args.run or _infer_run_from_path(p, rm)
+        return p, run_name
 
     run_name = args.run or rm.find_latest_run()
     if run_name is None:
@@ -102,16 +123,40 @@ def main() -> None:
                         help="Max episode steps to run.")
     parser.add_argument("--no-wait", action="store_true",
                         help="Skip the interactive pause at end (for GUI launcher).")
+    parser.add_argument("--speed-factor", type=int, default=None,
+                        help="Override physics speed factor (1 = real time for recording). "
+                             "Default: use value from run_config.json.")
     args = parser.parse_args()
 
     rm = RunManager()
     model_path, run_name = _resolve_model(args, rm)
 
     vehicle_model = _vehicle_model_for_run(run_name, rm)
+    obs_config = _obs_config_for_run(run_name, rm)
+
+    # Read timing/speed from run_config so eval physics matches training physics
+    run_cfg = rm.load_config(run_name) if run_name else {}
+    env_cfg = run_cfg.get("env", {}) if isinstance(run_cfg.get("env"), dict) else {}
+    speed_factor: int | None = None
+    try:
+        sf = env_cfg.get("speed_factor")
+        if sf is not None:
+            speed_factor = int(sf)
+    except (TypeError, ValueError):
+        pass
+    timing_profile: str | None = str(env_cfg.get("timing_profile", "")).strip().lower() or None
+    if timing_profile not in ("legacy_60hz", "det50ms"):
+        timing_profile = None
+    steps_per_action = int(env_cfg.get("steps_per_action", 15))
+    # CLI --speed-factor overrides run_config (e.g. force 1x for recording)
+    if args.speed_factor is not None:
+        speed_factor = args.speed_factor
 
     print(f"Run     : {run_name or '(direct path)'}")
     print(f"Model   : {model_path.name}")
     print(f"Vehicle : {vehicle_model}")
+    print(f"Obs     : {obs_config}")
+    print(f"Timing  : {timing_profile or 'default'}  Speed: {speed_factor or 1}x")
     print("Launching BeamNG — watch the car drive in the BeamNG window.")
 
     env: BeamNGRacingEnv | None = None
@@ -123,7 +168,10 @@ def main() -> None:
             live_spawn_mode="bootstrap",
             vehicle_id="ego_vehicle",
             vehicle_model=vehicle_model,
-            steps_per_action=15,
+            obs_config=obs_config,
+            steps_per_action=steps_per_action,
+            timing_profile=timing_profile,
+            speed_factor=speed_factor,
             max_episode_steps=args.steps,
             max_lateral_error_m=10.0,
         )
