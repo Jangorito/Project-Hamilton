@@ -54,6 +54,7 @@ except ImportError as exc:
     ) from exc
 
 from beamng_rl.envs.beamng_racing_env import REWARD_CONFIGS, BeamNGRacingEnv, RewardConfig
+from beamng_rl.envs.observation_builder import OBS_CONFIGS
 from beamng_rl.training.callbacks import (
     BeamNGTrainingHudCallback,
     RewardComponentLogger,
@@ -314,10 +315,24 @@ def _run_deterministic_rollout(
     return final_progress - start_progress, final_reason, jump_count
 
 
+def _run_obs_config(config: dict[str, Any]) -> str:
+    obs = _as_mapping(config.get("obs"))
+    key = str(obs.get("config_key", "v1")).strip().lower()
+    return key if key in OBS_CONFIGS else "v1"
+
+
+def _can_resume_with_obs(config: dict[str, Any], obs_key: str) -> tuple[bool, str]:
+    run_obs = _run_obs_config(config)
+    if run_obs == obs_key:
+        return True, ""
+    return False, f"was created with obs_config={run_obs!r} but {obs_key!r} was requested"
+
+
 def _build_run_config(
     reward_config: RewardConfig,
     reward_key: str,
     *,
+    obs_key: str,
     total_timesteps: int,
     env_config: dict[str, Any],
     vehicle_model: str,
@@ -344,6 +359,7 @@ def _build_run_config(
             "beamng_training_hud": beamng_training_hud,
         },
         "reward":  {"config_key": reward_key, **vars(reward_config)},
+        "obs":     {"config_key": obs_key, "obs_size": OBS_CONFIGS[obs_key]},
     }
 
 
@@ -354,6 +370,7 @@ def _ensure_car_suffix(
     speed_factor: int | None = None,
     total_timesteps: int | None = None,
     spawn_mode: str = "bootstrap",
+    obs_key: str = "v1",
 ) -> str:
     suffix = CAR_RUN_SUFFIXES[vehicle_model]
     base = _STEP_SUFFIX_RE.sub("", run_name.strip() or f"{reward_key}_{suffix}")
@@ -365,6 +382,9 @@ def _ensure_car_suffix(
     speed_suffix = f"{speed_value}x"
     if speed_value > 1 and speed_suffix not in tokens:
         base = f"{base}_{speed_suffix}"
+        tokens = base.lower().replace("-", "_").split("_")
+    if obs_key == "v2" and "obs2" not in tokens:
+        base = f"{base}_obs2"
         tokens = base.lower().replace("-", "_").split("_")
     if spawn_mode == "random_checkpoint" and "respawn" not in tokens:
         base = f"{base}_respawn"
@@ -450,6 +470,11 @@ def main() -> None:
                         help="Spawn mode: 'bootstrap' (fixed start marker) or "
                              "'random_checkpoint' (uniform random position each reset). "
                              "Default: bootstrap. Can also be set via launcher_session.json.")
+    parser.add_argument("--obs-config", metavar="KEY", default=None,
+                        choices=list(OBS_CONFIGS),
+                        help="Observation config key (v1 or v2). "
+                             "v2 appends prev_steer + prev_throttle_brake (14-feature obs). "
+                             "Default: v1. Can also be set via launcher_session.json.")
     args = parser.parse_args()
 
     # Allow parallel runs to use separate session / progress / stop-signal files.
@@ -498,6 +523,14 @@ def main() -> None:
         )
     reward_config = REWARD_CONFIGS[reward_key]
 
+    # Resolve obs config key: CLI > launcher session > default "v1".
+    obs_key = args.obs_config or str(session.get("obs_config", "v1"))
+    if obs_key not in OBS_CONFIGS:
+        sys.exit(
+            f"Error: unknown obs config key {obs_key!r}. "
+            f"Valid keys: {sorted(OBS_CONFIGS)}"
+        )
+
     # Resolve spawn mode: CLI > launcher session > default "bootstrap".
     spawn_mode = args.spawn_mode or str(session.get("spawn_mode", "bootstrap")).strip().lower()
     if spawn_mode not in SPAWN_MODES:
@@ -540,6 +573,7 @@ def main() -> None:
             speed_factor,
             total_timesteps,
             spawn_mode,
+            obs_key,
         )
         if rm.exists(run_name):
             sys.exit(
@@ -552,6 +586,7 @@ def main() -> None:
             _build_run_config(
                 reward_config,
                 reward_key,
+                obs_key=obs_key,
                 total_timesteps=total_timesteps,
                 env_config=env_config,
                 vehicle_model=vehicle_model,
@@ -584,6 +619,13 @@ def main() -> None:
                 f"but launcher selected {vehicle_model}. Start a fresh run "
                 "or select the matching vehicle."
             )
+        can_resume_obs, obs_reason = _can_resume_with_obs(existing_config, obs_key)
+        if not can_resume_obs and not debug_mode:
+            sys.exit(
+                f"Run '{run_name}' {obs_reason}. "
+                "Observation space mismatch would corrupt loaded weights. "
+                "Start a fresh run or select the matching obs config."
+            )
         resume_path = rm.find_latest_checkpoint(run_name)
         rm.open_run(run_name)
         print(f"Resuming run: {run_name}")
@@ -602,6 +644,7 @@ def main() -> None:
         # Log the reward config key prominently so the terminal output is
         # self-documenting and easy to grep when comparing run logs.
         print(f"\nReward config  : {reward_key}")
+        print(f"Obs config     : {obs_key} ({OBS_CONFIGS[obs_key]} features)")
         print(f"Vehicle        : {vehicle_model}")
         print(f"Speed factor   : {speed_factor if speed_factor is not None else 'default'}x")
         print(f"Timing profile : {timing_profile}")
@@ -618,6 +661,7 @@ def main() -> None:
             vehicle_id="ego_vehicle",
             vehicle_model=vehicle_model,
             reward_config=reward_config,
+            obs_config=obs_key,
             speed_factor=speed_factor,
             timing_profile=timing_profile,
             beamng_port=port,
