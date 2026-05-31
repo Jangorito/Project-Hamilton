@@ -34,9 +34,18 @@ except ModuleNotFoundError as exc:
     from beamng_rl.track.query_utils import TrackCentreline
 
 
-# observation vector has exactly 12 features
-_OBSERVATION_SIZE = 12
+# Base observation vector has 12 features.  obs_v2 appends 2 prev_action
+# features (prev_steer, prev_throttle_brake) for a 14-feature vector.
+_OBSERVATION_SIZE_V1 = 12
+_OBSERVATION_SIZE_V2 = 14
 _LOOKAHEAD_COUNT = 3
+
+# Registry of named observation configs — mirrors the REWARD_CONFIGS pattern so
+# every run records exactly which obs space it used in run_config.json.
+OBS_CONFIGS: dict[str, int] = {
+    "v1": _OBSERVATION_SIZE_V1,   # 12-feature baseline (all existing runs)
+    "v2": _OBSERVATION_SIZE_V2,   # v1 + prev_steer + prev_throttle_brake
+}
 
 # A tiny threshold is used checking if a vector is basically zero length
 _MIN_VECTOR_NORM = 1.0e-9
@@ -109,28 +118,41 @@ class ObservationBuilder:
         self,
         track: TrackCentreline,
         config: ObservationConfig | None = None,
+        obs_config_key: str = "v1",
     ) -> None:
+        if obs_config_key not in OBS_CONFIGS:
+            raise ValueError(
+                f"obs_config_key must be one of {sorted(OBS_CONFIGS)}, "
+                f"got {obs_config_key!r}"
+            )
         # The builder depends on the public TrackCentreline API instead of raw
         # centreline arrays, separating track math and observation construction
         self.track = track
         self.config = config if config is not None else ObservationConfig()
+        self.obs_config_key = obs_config_key
 
-    def build(self, vehicle_state: Mapping[str, Any]) -> np.ndarray:
+    def build(
+        self,
+        vehicle_state: Mapping[str, Any],
+        prev_action: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Build the ``np.float32`` observation vector.
 
-        Observation order:
-            [forward_speed_norm,
-             lateral_speed_norm,
-             vertical_speed_norm,
-             heading_error_norm,
-             lateral_error_norm,
-             lookahead_heading_error_20m_norm,
-             lookahead_heading_error_40m_norm,
-             lookahead_heading_error_80m_norm,
-             curvature_20m_norm,
-             curvature_40m_norm,
-             curvature_80m_norm,
+        Observation order (obs_v1, 12 features):
+            [forward_speed_norm, lateral_speed_norm, vertical_speed_norm,
+             heading_error_norm, lateral_error_norm,
+             lookahead_heading_error_20m_norm, ..._40m_norm, ..._80m_norm,
+             curvature_20m_norm, curvature_40m_norm, curvature_80m_norm,
              progress_ratio]
+
+        obs_v2 appends 2 additional features (14 total):
+            [...obs_v1..., prev_steer_norm, prev_throttle_brake_norm]
+
+        Args:
+            vehicle_state: Raw BeamNG state dict.
+            prev_action: The action taken in the previous step as a length-2
+                array [steer, throttle_brake] in [-1, 1]. Pass None (or omit)
+                to use zeros — correct for the first step after a reset.
         """
 
         if not isinstance(vehicle_state, Mapping):
@@ -219,7 +241,7 @@ class ObservationBuilder:
         # lap progress ratio
         progress_ratio = _clip_unit(float(query.lap_progress_ratio))
 
-        return np.asarray(
+        base = np.asarray(
             [
                 forward_speed_norm,
                 lateral_speed_norm,
@@ -233,25 +255,38 @@ class ObservationBuilder:
             dtype=np.float32,
         )
 
+        if self.obs_config_key == "v2":
+            if prev_action is not None:
+                prev_steer = float(np.clip(prev_action[0], -1.0, 1.0))
+                prev_throttle = float(np.clip(prev_action[1], -1.0, 1.0))
+            else:
+                prev_steer, prev_throttle = 0.0, 0.0
+            return np.append(base, [prev_steer, prev_throttle]).astype(np.float32)
+
+        return base
+
     def __call__(self, vehicle_state: Mapping[str, Any]) -> np.ndarray:
         """Allows the builder instance to be called directly to build an observation."""
 
         return self.build(vehicle_state)
 
     def observation_shape(self) -> tuple[int]:
-        """Return the fixed racing-aware observation shape."""
+        """Return the observation shape for the active obs config."""
 
-        return (_OBSERVATION_SIZE,)
+        return (OBS_CONFIGS[self.obs_config_key],)
 
     def low(self) -> np.ndarray:
         """Return per-feature lower bounds for a Gym/Gymnasium Box space."""
 
-        # All features are signed and clipped to [-1, 1] except progress_ratio,
-        # which is a lap fraction in [0, 1].
-        return np.asarray(
+        # All features are signed and clipped to [-1, 1] except progress_ratio
+        # (lap fraction in [0, 1]) and prev_action features (also [-1, 1]).
+        base = np.asarray(
             [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0],
             dtype=np.float32,
         )
+        if self.obs_config_key == "v2":
+            return np.append(base, [-1.0, -1.0]).astype(np.float32)
+        return base
 
     def high(self) -> np.ndarray:
         """Return per-feature upper bounds for a Gym/Gymnasium Box space."""
@@ -265,7 +300,7 @@ class ObservationBuilder:
             _distance_label(distance_m)
             for distance_m in self.config.lookahead_distances_m
         ]
-        return [
+        names = [
             "forward_speed_norm",
             "lateral_speed_norm",
             "vertical_speed_norm",
@@ -275,6 +310,9 @@ class ObservationBuilder:
             *(f"curvature_{label}_norm" for label in distance_labels),
             "progress_ratio",
         ]
+        if self.obs_config_key == "v2":
+            names += ["prev_steer_norm", "prev_throttle_brake_norm"]
+        return names
 
     def _extract_position_xyz(self, vehicle_state: Mapping[str, Any]) -> np.ndarray:
         # checks the possible position keys. 
