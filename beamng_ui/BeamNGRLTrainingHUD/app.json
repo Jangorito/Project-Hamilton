@@ -9,10 +9,10 @@
   "css": {
     "left": "16px",
     "top": "16px",
-    "width": "430px",
-    "height": "330px",
-    "min-width": "360px",
-    "min-height": "280px"
+    "width": "580px",
+    "height": "480px",
+    "min-width": "480px",
+    "min-height": "400px"
   },
   "author": "Project Hamilton",
   "version": "0.1",

@@ -16,10 +16,10 @@ APP_DEST_RELATIVE = Path("ui") / "modules" / "apps" / "BeamNGRLTrainingHUD"
 DEFAULT_PLACEMENT = {
     "left": "16px",
     "top": "16px",
-    "width": "430px",
-    "height": "330px",
-    "min-width": "360px",
-    "min-height": "280px",
+    "width": "580px",
+    "height": "480px",
+    "min-width": "480px",
+    "min-height": "400px",
 }
 
 
