@@ -189,6 +189,7 @@ def main() -> None:
     vehicle_model = _run_vehicle_model(run_name, env_cfg)
     speed_factor = _run_speed_factor(env_cfg)
     timing_profile = _run_timing_profile(env_cfg, speed_factor)
+    obs_config = str(run_cfg.get("obs", {}).get("config_key", "v1"))
     steps_per_action = _env_int(env_cfg, "steps_per_action", 15)
     max_episode_steps = _env_int(env_cfg, "max_episode_steps", 500)
     max_lateral_error_m = _env_float(env_cfg, "max_lateral_error_m", 10.0)
@@ -201,6 +202,7 @@ def main() -> None:
 
     print(f"Run      : {run_name}")
     print(f"Vehicle  : {vehicle_model}")
+    print(f"Obs      : {obs_config}")
     print(f"Timing   : {timing_profile}")
     print(f"Speed    : {speed_factor if speed_factor is not None else 'default'}x")
     print(f"Found    : {len(models)} model files")
@@ -229,6 +231,7 @@ def main() -> None:
             progress_jump_penalty=progress_jump_penalty,
             max_damage=max_damage,
             wall_bash_steps_limit=wall_bash_steps_limit,
+            obs_config=obs_config,
             beamng_port=port,
             **({"beamng_user": beamng_user} if beamng_user is not None else {}),
         )
