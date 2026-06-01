@@ -175,6 +175,7 @@ These Windows scheduled tasks exist on JANGO-DESKTOP and can be triggered over S
 |-----------|-------------|
 | `HamiltonTraining` | Runs `launch_training.ps1 -Stream` in an interactive (Session 1) desktop process — required for BeamNG GPU rendering |
 | `BeamNGDirect` | Launches BeamNG standalone for diagnostics (no training) |
+| `HamiltonWatch` | Runs `scripts/launcher/watch_task_runner.py`, which launches `watch_model.py` from the interactive desktop session |
 | `WakeScreen` | Sends a mouse input event to wake a sleeping monitor |
 | `WakeScreen2` | Alternative wake task using `SendInput` — use this one if `WakeScreen` doesn't work |
 
@@ -182,11 +183,14 @@ These Windows scheduled tasks exist on JANGO-DESKTOP and can be triggered over S
 
 ```powershell
 schtasks /run /tn "HamiltonTraining"
+schtasks /run /tn "HamiltonWatch"
 schtasks /run /tn "WakeScreen2"
 schtasks /run /tn "BeamNGDirect"
 ```
 
 > **Why scheduled tasks?** SSH sessions land in Windows Session 0 (no GPU rendering, no visible window). Scheduled tasks with the `/it` flag run in Session 1 (the interactive desktop), which BeamNG and OBS require.
+>
+> `watch_model.py` is especially sensitive to this because it opens BeamNG in a graphical mode. If Flask is started over SSH, use `HamiltonWatch` or start the Flask server locally on Jango so the BeamNG window has an interactive desktop.
 
 ---
 

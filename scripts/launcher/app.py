@@ -41,6 +41,8 @@ WATCH_PID_FILE = LOG_DIR / "watch.pid"
 WATCH_LOG_FILE = LOG_DIR / "watch_latest.log"
 AI_RACELINE_PID = LOG_DIR / "ai_raceline.pid"
 AI_RACELINE_LOG = LOG_DIR / "ai_raceline_latest.log"
+WATCH_TASK_CONFIG = REPO_ROOT / "config" / "watch_task.json"
+WATCH_TASK_NAME = "HamiltonWatch"
 SESSION_CONFIG_PATH = REPO_ROOT / "config" / "launcher_session.json"
 
 OBS_PORT = int(os.environ.get("OBS_PORT", 4455))
@@ -126,6 +128,14 @@ def _kill_beamng() -> None:
             ["taskkill", "/F", "/IM", process_name, "/T"],
             capture_output=True,
         )
+
+
+def _run_schtask(task_name: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["schtasks", "/run", "/tn", task_name],
+        capture_output=True,
+        text=True,
+    )
 
 
 def _get_training_pid() -> int | None:
@@ -940,6 +950,29 @@ def api_watch():
 
     WATCH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     log_f = WATCH_LOG_FILE.open("w", encoding="utf-8", buffering=1)
+    WATCH_TASK_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    WATCH_TASK_CONFIG.write_text(
+        json.dumps({
+            "model_path": str(model_path),
+            "run_name": run_name,
+            "steps": steps,
+            "speed_factor": int(watch_speed) if watch_speed and int(watch_speed) > 0 else None,
+            "no_wait": True,
+        }, indent=2),
+        encoding="utf-8",
+    )
+
+    task_result = _run_schtask(WATCH_TASK_NAME)
+    if task_result.returncode == 0:
+        return jsonify({
+            "ok": True,
+            "message": (
+                f"Watch scheduled in interactive desktop session: {Path(model_path).stem}, {steps} steps."
+            ),
+        })
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC_ROOT)
     proc = subprocess.Popen(
         [
             str(PYTHON_EXE),
@@ -953,6 +986,7 @@ def api_watch():
         stdout=log_f,
         stderr=subprocess.STDOUT,
         cwd=str(REPO_ROOT),
+        env=env,
     )
     _watch_proc["proc"] = proc
     _watch_proc["log_file"] = log_f
