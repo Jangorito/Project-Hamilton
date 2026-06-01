@@ -1,0 +1,30 @@
+\section{Background}
+\label{sec:background}
+
+% Target: ~600 words
+
+\subsection{PPO and Continuous Control}
+% ~150 words
+% - Schulman et al. (2017): PPO, clipped surrogate objective
+% - Stable-Baselines3, MlpPolicy, n_steps=256, batch_size=64, gamma=0.99
+% - Continuous action space harder than discrete; policy learns Gaussian over actions
+
+\subsection{Reinforcement Learning for Autonomous Racing}
+% ~200 words
+% - Wurman et al. (2022): Gran Turismo Sophy; progress as dense proxy for lap time
+% - TORCS / OpenRacing literature: speed + track-centre as standard reward
+% - Contrast: this project questions whether centreline-following is the right proxy
+
+\subsection{Reward Shaping}
+% ~150 words
+% - Ng et al. (1999): potential-based reward shaping
+% - Dense vs sparse tradeoff: progress is dense and learnable; sparse lap-time impractical at 278k steps
+% [FILL: cite 1-2 papers on reward design in robotics / driving RL]
+
+\subsection{Beckman's Physics of Racing}
+% ~100 words
+% - Traction circle / budget: total grip is finite; lateral + longitudinal demand must not exceed it
+% - Physics-shaped corner speed: v_target = sqrt(a_lat / kappa)
+% - Braking distance scales with v^2: anticipation required, not reactive overspeed detection
+% - These principles motivate v21b's reward terms directly
+

@@ -1,0 +1,41 @@
+\section{Discussion}
+\label{sec:discussion}
+
+% Target: ~500 words
+
+\subsection{RQ1: Did v21b Improve Learning Progress?}
+% The effect is asymmetric.
+% For ETK (comparing B vs C): v21b [improved / did not improve] best-checkpoint by [X] m.
+% For SBR (comparing A vs D): v21b [improved / reduced] performance by [Y] m.
+% No clean main effect -- reward change interacted with the vehicle.
+
+\subsection{RQ2: Does the Effect Depend on Vehicle Dynamics?}
+% Yes -- clear interaction.
+% [Fill with C and D results]
+%
+% Interpretable explanation using traction-budget framing:
+% - SBR4: narrow, sharp handling (snap oversteer, low polar moment).
+%   Under V1: found aggressive policy -> 2419.9 m best checkpoint.
+%   Under v21b: physics-shaped speed target with allowed_aggression=1.0 triggered
+%   traction penalty continuously. Policy reduced speed -> Cond D terminated by
+%   max_episode_steps rather than damage -- safe but slow.
+% - ETK K-Series: progressive oversteer, greater tolerance for lateral slip.
+%   allowed_aggression=1.0 within its natural operating range -> v21b less constraining
+%   -> explains ETK improvement.
+%
+% Finding: allowed_aggression is a vehicle-specific parameter, not a universal constant.
+% Future condition v21c (allowed_aggression=1.15 for SBR) would test this directly.
+
+\subsection{Limitations}
+% - n=1 per condition: cannot distinguish randomness from systematic effects.
+%   Multiple seeds would strengthen conclusions.
+% - C and D showed oscillating rewards not fully plateaued at 278k steps;
+%   more steps might change the comparison.
+% - Deterministic evaluation may underperform stochastic training near grip limits.
+%   Best-checkpoint selection mitigates but does not eliminate this.
+% - Lap completion was not rewarded. Agent has no incentive to complete laps over
+%   maximising per-step progress; 2419.9 m result is progress accumulation, not a
+%   completed-lap metric.
+% - 3D projection fix applied to all conditions; Condition B trained on corrected
+%   centreline but earlier runs (v2) used the broken version.
+
