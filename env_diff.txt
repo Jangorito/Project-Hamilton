@@ -1,0 +1,211 @@
+diff --git a/src/beamng_rl/envs/beamng_racing_env.py b/src/beamng_rl/envs/beamng_racing_env.py
+index 26e58f4..58d1b26 100644
+--- a/src/beamng_rl/envs/beamng_racing_env.py
++++ b/src/beamng_rl/envs/beamng_racing_env.py
+@@ -31,7 +31,7 @@ try:
+         build_hirochi_sbr_scenario,
+         resolve_beamng_home_from_path_or_env,
+     )
+-    from beamng_rl.envs.observation_builder import ObservationBuilder
++    from beamng_rl.envs.observation_builder import OBS_CONFIGS, ObservationBuilder
+     from beamng_rl.track.query_utils import TrackCentreline, TrackQueryResult
+ except ModuleNotFoundError as exc:
+     # Running this file directly with
+@@ -57,7 +57,7 @@ except ModuleNotFoundError as exc:
+         build_hirochi_sbr_scenario,
+         resolve_beamng_home_from_path_or_env,
+     )
+-    from beamng_rl.envs.observation_builder import ObservationBuilder
++    from beamng_rl.envs.observation_builder import OBS_CONFIGS, ObservationBuilder
+     from beamng_rl.track.query_utils import TrackCentreline, TrackQueryResult
+ 
+ 
+@@ -99,6 +99,15 @@ class RewardConfig:
+     braking_accel_budget_mps2: float = 9.0
+     braking_shortfall_weight: float = 0.0
+ 
++    # V2.2: racing-line reward.
++    # When raceline_path is set, the lateral reference switches from the
++    # centreline to the precomputed racing line, and the speed target is read
++    # from the racing line's speed profile. None preserves all earlier configs.
++    raceline_path: str | None = None
++    raceline_lateral_weight: float = 0.15      # penalty per metre off the racing line
++    raceline_overspeed_weight: float = 0.3     # penalty per m/s above profile speed
++    raceline_speed_lookahead_m: float = 5.0    # read profile this far ahead (brake in time)
++
+ 
+ # ---------------------------------------------------------------------------
+ # Reward config registry — named presets for controlled experiments.
+@@ -216,6 +225,27 @@ REWARD_CONFIGS: dict[str, RewardConfig] = {
+         braking_accel_budget_mps2=9.0,
+         braking_shortfall_weight=0.1,
+     ),
++    # V2.2 — racing-line reward. Lateral reference is the physics racing line
++    # (min-curvature, ~69.3 s line) instead of the centreline, and the speed
++    # target comes from that line's forward-backward speed profile. Progress
++    # stays the main driver; heading + raceline-lateral + overspeed shape the
++    # line-following. lateral_accel_budget_mps2 stays None so the traction-budget
++    # branch is skipped; lateral_error_weight=0 disables the centreline term.
++    "v22": RewardConfig(
++        progress_weight=1.0,
++        speed_weight=0.0,
++        heading_error_weight=0.2,
++        lateral_error_weight=0.0,
++        off_track_penalty=10.0,
++        reverse_progress_penalty=2.0,
++        stuck_step_penalty=0.05,
++        action_smoothness_weight=0.4,
++        curvature_overspeed_weight=0.0,
++        raceline_path="data/hirochi_track/physics_raceline.json",
++        raceline_lateral_weight=0.15,
++        raceline_overspeed_weight=0.3,
++        raceline_speed_lookahead_m=5.0,
++    ),
+ }
+ 
+ 
+@@ -282,6 +312,7 @@ class BeamNGRacingEnv(gym.Env):
+         vehicle_model: str = "etkc",
+         speed_factor: int | None = None,
+         timing_profile: str | None = None,
++        obs_config: str = "v1",
+     ) -> None:
+         super().__init__()
+ 
+@@ -297,8 +328,18 @@ class BeamNGRacingEnv(gym.Env):
+         self.track = TrackCentreline.from_json(track_json_path, closed_loop=True)
+ 
+         # ObservationBuilder converts raw vehicle-state dictionaries into the
+-        # fixed 12-feature vector already smoke-tested elsewhere in the project.
+-        self.observation_builder = ObservationBuilder(self.track)
++        # fixed observation vector. obs_config selects v1 (12 features) or
++        # v2 (14 features — adds prev_steer + prev_throttle_brake).
++        if obs_config not in OBS_CONFIGS:
++            raise ValueError(
++                f"obs_config must be one of {sorted(OBS_CONFIGS)}, got {obs_config!r}"
++            )
++        self.obs_config = obs_config
++        self.observation_builder = ObservationBuilder(self.track, obs_config_key=obs_config)
++
++        # Previous action — zero-initialised; updated each step so obs_v2 can
++        # append it to the observation vector.
++        self._prev_action = np.zeros(2, dtype=np.float32)
+ 
+         # Reuse the builder's bounds so the Gymnasium space stays in sync with
+         # the observation implementation if feature limits change later.
+@@ -329,6 +370,17 @@ class BeamNGRacingEnv(gym.Env):
+         self.render_mode = render_mode
+         self.reward_config = reward_config or RewardConfig()
+ 
++        # V2.2 racing-line reference. Loaded once if the reward config names a
++        # raceline file; resolved relative to the repo root when not absolute.
++        self.raceline_reference = None
++        if self.reward_config.raceline_path is not None:
++            from beamng_rl.track.raceline_reference import RaceLineReference
++
++            raceline_path = Path(self.reward_config.raceline_path)
++            if not raceline_path.is_absolute():
++                raceline_path = Path(__file__).resolve().parents[3] / raceline_path
++            self.raceline_reference = RaceLineReference.from_json(raceline_path, self.track)
++
+         # Simulation backend selection. The mock backend is the default because
+         # it keeps imports, CI-style smoke tests, and reward debugging possible
+         # on machines where BeamNG.tech is not running.
+@@ -498,7 +550,8 @@ class BeamNGRacingEnv(gym.Env):
+         # This returns a backend-normalised vehicle-state dictionary. Mock mode
+         # uses the safe toy dynamics; live mode polls the BeamNGpy vehicle.
+         vehicle_state = self._reset_simulation(options=options)
+-        observation = self.observation_builder.build(vehicle_state)
++        self._prev_action = np.zeros(2, dtype=np.float32)
++        observation = self.observation_builder.build(vehicle_state, prev_action=self._prev_action)
+ 
+         # Store the starting progress so the first reward uses progress made
+         # after reset rather than distance from zero on the lap.
+@@ -554,7 +607,8 @@ class BeamNGRacingEnv(gym.Env):
+         self._advance_simulation()
+ 
+         vehicle_state = self._get_vehicle_state()
+-        observation = self.observation_builder.build(vehicle_state)
++        observation = self.observation_builder.build(vehicle_state, prev_action=self._prev_action)
++        self._prev_action = np.asarray(action, dtype=np.float32).copy()
+ 
+         heading_rad = self._heading_from_state(vehicle_state)
+         query = self.track.query(vehicle_state["pos"], vehicle_heading_rad=heading_rad)
+@@ -821,6 +875,30 @@ class BeamNGRacingEnv(gym.Env):
+             braking_shortfall_m = max(0.0, required_braking_distance_m - 80.0)
+             braking_shortfall_penalty = braking_shortfall_m * config.braking_shortfall_weight
+ 
++        # V2.2 racing-line terms. With a racing-line reference loaded, the
++        # lateral reference is the racing line (not the centreline) and the
++        # speed target comes from the line's profile, read a little ahead so
++        # the agent brakes into corners in time. lateral_error_m is the signed
++        # centreline error (+ = left), matching the raceline offset sign.
++        raceline_offset_m = 0.0
++        raceline_lateral_error_m = 0.0
++        raceline_target_speed_mps = 0.0
++        raceline_lateral_penalty = 0.0
++        raceline_overspeed_penalty = 0.0
++        if self.raceline_reference is not None:
++            raceline_offset_m = self.raceline_reference.offset_at(lap_progress)
++            raceline_target_speed_mps = self.raceline_reference.target_speed_at(
++                lap_progress + config.raceline_speed_lookahead_m
++            )
++            raceline_lateral_error_m = lateral_error_m - raceline_offset_m
++            raceline_lateral_penalty = (
++                abs(raceline_lateral_error_m) * config.raceline_lateral_weight
++            )
++            raceline_overspeed_penalty = (
++                max(0.0, forward_speed_mps - raceline_target_speed_mps)
++                * config.raceline_overspeed_weight
++            )
++
+         reward = (
+             progress_reward
+             + speed_reward
+@@ -834,6 +912,8 @@ class BeamNGRacingEnv(gym.Env):
+             - curvature_overspeed_penalty
+             - traction_budget_penalty
+             - braking_shortfall_penalty
++            - raceline_lateral_penalty
++            - raceline_overspeed_penalty
+         )
+ 
+         reward_info = {
+@@ -871,6 +951,11 @@ class BeamNGRacingEnv(gym.Env):
+             "required_braking_distance_m": float(required_braking_distance_m),
+             "braking_shortfall_m": float(braking_shortfall_m),
+             "braking_shortfall_penalty": float(braking_shortfall_penalty),
++            "raceline_offset_m": float(raceline_offset_m),
++            "raceline_lateral_error_m": float(raceline_lateral_error_m),
++            "raceline_target_speed_mps": float(raceline_target_speed_mps),
++            "raceline_lateral_penalty": float(raceline_lateral_penalty),
++            "raceline_overspeed_penalty": float(raceline_overspeed_penalty),
+             "total_reward": float(reward),
+         }
+         return float(reward), reward_info
+@@ -1447,13 +1532,21 @@ class BeamNGRacingEnv(gym.Env):
+                     [centre_point[0], centre_point[1], 0.0],
+                     dtype=float,
+                 )
+-            base_query = self.track.query(centre_point[:3])
+-            tangent_xy = np.asarray(base_query.track_tangent_xy, dtype=float)
+-            left_normal_xy = np.asarray([-tangent_xy[1], tangent_xy[0]], dtype=float)
++
++            # Use the pre-computed segment_track_direction_xy directly — this is
++            # the same source that drives the heading-error observation feature and
++            # is always normalised and forward-pointing along the lap.  Avoids
++            # track.query() which can pick the wrong segment near boundaries or the
++            # overpass and return a 180° wrong tangent.
++            norm_progress = self.track._normalise_progress(random_progress_m)
++            seg_idx = self.track._segment_index_at_progress(norm_progress)
++            tangent_xy = self.track.segment_track_direction_xy[seg_idx].copy()
++
++            left_normal_xy = np.array([-tangent_xy[1], tangent_xy[0]], dtype=float)
+             position_xyz = centre_point[:3].copy()
+             position_xyz[:2] += left_normal_xy * self.live_spawn_lateral_offset_m
+             position_xyz[2] += self.live_spawn_z_offset_m
+-            heading_rad = float(base_query.track_heading_rad)
++            heading_rad = float(math.atan2(tangent_xy[1], tangent_xy[0]))
+             half_yaw = 0.5 * heading_rad
+             rot_quat = (0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+             return (
