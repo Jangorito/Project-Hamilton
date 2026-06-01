@@ -10,6 +10,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## Report-writing frame: RL and racecraft
+
+If the final research question is still fluid, the strongest dissertation through-line is: **can PPO learn useful racecraft when the reward exposes the same trade-offs a racing driver manages - speed, line, braking, grip budget, smoothness, and vehicle dynamics - instead of only rewarding generic lane-following?**
+
+Useful framing points:
+
+- The project is not just "drive around the centreline". The agent is learning continuous race control: steering plus a combined throttle/brake axis in `[-1, 1]`, using only compact vehicle-state and track-geometry features rather than images or scripted racing commands.
+- The observation design is a simplified driver's mental model: vehicle-frame forward/lateral/vertical speed, current alignment and lateral error, and 20/40/80 m lookahead heading/curvature. This gives the policy the information needed for corner entry, not just reactive steering.
+- Progress reward is a dense proxy for lap-time minimisation. The report should be careful: the agent is not directly optimising lap time yet; it is optimising valid metres advanced per action step, with failure penalties. Later reward variants remove the flat speed bonus so "speed" is only valuable when it becomes stable progress.
+- The "art of racing" angle maps neatly onto reward evolution:
+  - V1: baseline centreline-following plus speed and curvature overspeed shaping.
+  - V2: removes the raw speed subsidy, increases smoothness, and relaxes centreline discipline so racing-line discovery is less overconstrained.
+  - V2.1-A/B: recasts cornering as traction-budget management with `v_target = sqrt(a_lat / kappa)` and braking-distance anticipation.
+  - V2.2/V2.2-B: introduces a racing line as a soft road-width prior, not as a hard imitation target.
+- The physics-informed contribution is interpretability. `lateral_risk_ratio`, `traction_budget_penalty`, and `braking_shortfall_penalty` can be discussed as behavioural diagnostics: is the policy arriving too fast, braking too late, or simply driving slowly enough to avoid risk?
+- The racing line should be described as an encoded theory of road-width usage: wider entry/apex/exit choices reduce effective curvature, which reduces lateral acceleration demand, which allows higher safe speed for the same grip budget. In `v22b`, line-following is gated and decayed so progress and physically plausible speed remain the objective.
+- The vehicle comparison is a racecraft stress test. ETK and SBR expose the same policy/reward code to different dynamics; the SBR's sharper behaviour makes exploration and input smoothness more consequential, while the ETK is more forgiving.
+
+Method facts worth reporting:
+
+| Item | Current implementation |
+|------|------------------------|
+| RL algorithm | Stable-Baselines3 PPO, `MlpPolicy` |
+| PPO config | `n_steps=256`, `batch_size=64`, `gamma=0.99`, `learning_rate=3e-4` |
+| Action space | 2D continuous: steering, combined throttle/brake |
+| Core episode limits | 500 policy steps, off-track at `abs(lateral_error)>10 m`, damage over 500, stuck after 100 low-progress steps, wall-bash after 30 near-wall low-progress steps |
+| Main task scale | Full lap is ~2158 m; report progress as metres and percentage of lap |
+| Reference artefacts | BeamNG AI racelines and a physics minimum-curvature raceline; physics line estimates ~69.3 s at `mu=1.1`, BeamNG AI references are roughly ~81 s |
+
+Evidence hooks for the Results/Discussion:
+
+- Always separate **learning curves** from **deterministic checkpoint evaluation**. `ep_rew_mean` is a rolling training statistic and may not equal best checkpoint progress.
+- Report final or best checkpoint progress, termination reason, damage, progress jumps, and reward-component means. For physics rewards, include risk ratio and braking shortfall; for raceline rewards, include raceline lateral error, gate values, and effective line scale.
+- Compare each run against the full 2158 m lap, the simple heuristic (~965 m where relevant), BeamNG AI reference laps, and the physics raceline as a theoretical ceiling rather than a directly fair competitor.
+- Discuss failure modes in racing language: late braking, carrying too much speed into curvature, oscillatory steering, conservative under-driving, off-track exits, wall-bashing, and vehicle-specific snap-oversteer sensitivity.
+
+Caveats to keep explicit:
+
+- Lap completion termination/bonus is still not implemented; progress is episode-relative and dense, not a finished-lap metric.
+- Random-spawn runs cannot be compared using raw rollout progress from their spawn point; use fixed-spawn evaluation.
+- Deterministic PPO evaluation can underperform stochastic training actions in continuous control, especially near grip limits.
+- Final checkpoint is not guaranteed to be the best behavioural checkpoint; use `eval_checkpoints.py`.
+- As of 2026-06-01, training is running right now per user note. Treat the latest run artefacts, TensorBoard events, and active-run notes as in-progress until the live process has stopped and final deterministic evaluation has been run.
+
+---
+
 ## Environment setup
 
 The venv lives at `venv/` (not `.venv/`). Always activate before running anything:
