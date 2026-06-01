@@ -1,0 +1,55 @@
+\section{System Design}
+\label{sec:system_design}
+
+% Target: ~600 words
+
+\subsection{Environment}
+% ~150 words
+% - BeamNG.tech v0.38.3; soft-body physics; Hirochi Raceway (closed circuit, 2150 m)
+% - BeamNGpy Python API; Gymnasium wrapper (continuous control interface)
+% - Centreline: 1077 points at 2 m spacing; 3D nearest-point projection with Z disambiguation
+%   at overpass (264 m / 1262 m arc-length, 6.75 m Z separation)
+% - Timing: det50ms, 15 physics frames per action step (0.25 s sim time per step)
+
+\subsection{Agent}
+% ~150 words
+% - PPO (Stable-Baselines3), MlpPolicy
+% - Action space: 2D continuous [-1,1]: action[0] = steering, action[1] = throttle/brake
+% - Observation space (obs_v1, 12 features): forward/lateral/vertical speed, heading error,
+%   lateral centreline error, lookahead heading errors at 20/40/80 m,
+%   track curvature at 20/40/80 m, progress ratio
+% - PPO config: n_steps=256, batch_size=64, gamma=0.99, lr=3e-4
+
+\subsection{Reward Functions}
+% ~200 words
+% Describe V1 and v21b; include the parameter comparison table below
+
+% TABLE: V1 vs v21b reward parameters
+\begin{table}[h]
+\centering
+\caption{Key reward configuration differences between V1 and v21b.}
+\label{tab:reward_configs}
+\begin{tabular}{lll}
+\toprule
+Parameter & V1 & v21b \\
+\midrule
+Speed bonus       & \texttt{speed\_weight=0.05} & 0 (removed) \\
+Curvature target  & $35 - 700\kappa$ (linear)   & $\sqrt{8.0 / \max(\kappa, \varepsilon)}$ \\
+Traction penalty  & None                        & $\max(0,\, v/v_t - 1.0)^2 \times 3.0$ \\
+Braking shortfall & None                        & $\max(0,\, \frac{v^2 - v_t^2}{2 \times 9.0} - 80) \times 0.1$ \\
+Smoothness weight & 0.1                         & 0.4 \\
+Lateral error weight & 0.1                      & 0.03 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Key distinction: v21b replaces qualitative penalties with quantities that have physical units
+% and interpretable magnitudes (lateral acceleration in m/s^2, braking distance in m)
+
+\subsection{Experimental Design}
+% ~100 words
+% - 2x2 factorial: Vehicle {ETK K-Series, SBR4} x Reward {V1, v21b}
+% - 4 conditions, each ~278k steps, det50ms, fixed spawn
+% - Evaluation: deterministic best-checkpoint rollout via eval_checkpoints.py (500 steps, fixed spawn)
+% - Why best checkpoint not final: PPO continuous control often shows non-monotonic learning
+
