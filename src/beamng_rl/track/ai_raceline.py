@@ -14,7 +14,7 @@ import numpy as np
 from beamng_rl.track.geometry import resample_polyline
 from beamng_rl.track.query_utils import TrackCentreline
 
-Float3 = tuple[float, float, float]
+Float3 = "tuple[float, float, float]"
 
 
 @dataclass(frozen=True)
