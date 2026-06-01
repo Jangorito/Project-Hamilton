@@ -1,7 +1,7 @@
 {
   "car": "sbr",
   "car_label": "SBR4 Track",
-  "run_name": "v22b_subaru_16x_obs2_280ksteps",
+  "run_name": "v22b_subaru_16x_obs2_100471steps",
   "fresh": true,
   "total_timesteps": 280000,
   "stream": true,
