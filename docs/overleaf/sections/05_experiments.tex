@@ -1,0 +1,25 @@
+\section{Experiments}
+\label{sec:experiments}
+
+% Target: ~250 words
+
+\subsection{Conditions}
+% Four conditions, each a fresh PPO training run:
+% - Condition A: SBR4 + V1 reward, 278,353 steps
+% - Condition B: ETK K-Series + V1 reward, 278,670 steps
+% - Condition C: ETK K-Series + v21b reward, 280,064 steps
+% - Condition D: SBR4 + v21b reward, 278,016 steps
+%
+% All conditions: det50ms timing, fixed bootstrap spawn, obs_v1 (12 features), 500-step max episode.
+
+\subsection{Evaluation Protocol}
+% Each run evaluated by rolling out every saved checkpoint (every 8k steps) plus final model,
+% deterministically (model.predict(deterministic=True)), fixed spawn, up to 500 steps.
+% Best-checkpoint progress is the primary metric.
+% Training ep_rew_mean is secondary indicator of learning trajectory.
+
+\subsection{Baselines}
+% - BeamNG CPU AI (ETK, aggression 1.0): 80.39 s, 26.73 m/s average speed
+% - Physics racing line (minimum-curvature, mu=1.1): ~69.3 s estimated
+% - Full lap distance: 2150 m
+
