@@ -10,6 +10,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## Report-writing frame: RL and racecraft
+
+If the final research question is still fluid, the strongest dissertation through-line is: **can PPO learn useful racecraft when the reward exposes the same trade-offs a racing driver manages - speed, line, braking, grip budget, smoothness, and vehicle dynamics - instead of only rewarding generic lane-following?**
+
+Useful framing points:
+
+- The project is not just "drive around the centreline". The agent is learning continuous race control: steering plus a combined throttle/brake axis in `[-1, 1]`, using only compact vehicle-state and track-geometry features rather than images or scripted racing commands.
+- The observation design is a simplified driver's mental model: vehicle-frame forward/lateral/vertical speed, current alignment and lateral error, and 20/40/80 m lookahead heading/curvature. This gives the policy the information needed for corner entry, not just reactive steering.
+- Progress reward is a dense proxy for lap-time minimisation. The report should be careful: the agent is not directly optimising lap time yet; it is optimising valid metres advanced per action step, with failure penalties. Later reward variants remove the flat speed bonus so "speed" is only valuable when it becomes stable progress.
+- The "art of racing" angle maps neatly onto reward evolution:
+  - V1: baseline centreline-following plus speed and curvature overspeed shaping.
+  - V2: removes the raw speed subsidy, increases smoothness, and relaxes centreline discipline so racing-line discovery is less overconstrained.
+  - V2.1-A/B: recasts cornering as traction-budget management with `v_target = sqrt(a_lat / kappa)` and braking-distance anticipation.
+  - V2.2/V2.2-B: introduces a racing line as a soft road-width prior, not as a hard imitation target.
+- The physics-informed contribution is interpretability. `lateral_risk_ratio`, `traction_budget_penalty`, and `braking_shortfall_penalty` can be discussed as behavioural diagnostics: is the policy arriving too fast, braking too late, or simply driving slowly enough to avoid risk?
+- The racing line should be described as an encoded theory of road-width usage: wider entry/apex/exit choices reduce effective curvature, which reduces lateral acceleration demand, which allows higher safe speed for the same grip budget. In `v22b`, line-following is gated and decayed so progress and physically plausible speed remain the objective.
+- The vehicle comparison is a racecraft stress test. ETK and SBR expose the same policy/reward code to different dynamics; the SBR's sharper behaviour makes exploration and input smoothness more consequential, while the ETK is more forgiving.
+
+Method facts worth reporting:
+
+| Item | Current implementation |
+|------|------------------------|
+| RL algorithm | Stable-Baselines3 PPO, `MlpPolicy` |
+| PPO config | `n_steps=256`, `batch_size=64`, `gamma=0.99`, `learning_rate=3e-4` |
+| Action space | 2D continuous: steering, combined throttle/brake |
+| Core episode limits | 500 policy steps, off-track at `abs(lateral_error)>10 m`, damage over 500, stuck after 100 low-progress steps, wall-bash after 30 near-wall low-progress steps |
+| Main task scale | Full lap is ~2158 m; report progress as metres and percentage of lap |
+| Reference artefacts | BeamNG AI racelines and a physics minimum-curvature raceline; physics line estimates ~69.3 s at `mu=1.1`, BeamNG AI references are roughly ~81 s |
+
+Evidence hooks for the Results/Discussion:
+
+- Always separate **learning curves** from **deterministic checkpoint evaluation**. `ep_rew_mean` is a rolling training statistic and may not equal best checkpoint progress.
+- Report final or best checkpoint progress, termination reason, damage, progress jumps, and reward-component means. For physics rewards, include risk ratio and braking shortfall; for raceline rewards, include raceline lateral error, gate values, and effective line scale.
+- Compare each run against the full 2158 m lap, the simple heuristic (~965 m where relevant), BeamNG AI reference laps, and the physics raceline as a theoretical ceiling rather than a directly fair competitor.
+- Discuss failure modes in racing language: late braking, carrying too much speed into curvature, oscillatory steering, conservative under-driving, off-track exits, wall-bashing, and vehicle-specific snap-oversteer sensitivity.
+
+Caveats to keep explicit:
+
+- Lap completion termination/bonus is still not implemented; progress is episode-relative and dense, not a finished-lap metric.
+- Random-spawn runs cannot be compared using raw rollout progress from their spawn point; use fixed-spawn evaluation.
+- Deterministic PPO evaluation can underperform stochastic training actions in continuous control, especially near grip limits.
+- Final checkpoint is not guaranteed to be the best behavioural checkpoint; use `eval_checkpoints.py`.
+- As of 2026-06-01, training is running right now per user note. Treat the latest run artefacts, TensorBoard events, and active-run notes as in-progress until the live process has stopped and final deterministic evaluation has been run.
+
+---
+
 ## Environment setup
 
 The venv lives at `venv/` (not `.venv/`). Always activate before running anything:
@@ -67,7 +113,7 @@ python scripts\eval\watch_model.py --run v1_etk_2x
 python scripts\eval\eval_checkpoints.py --run v1_etk_2x     # → checkpoints_eval.csv
 python scripts\eval\log_live_rollout.py --run v1_etk_2x
 ```
-Both `watch_model.py` and `eval_checkpoints.py` auto-read `obs_config`, `vehicle_model`, `timing_profile`, and `speed_factor` from `run_config.json` — no manual flags needed. Always evaluate random-spawn runs with fixed spawn (these scripts hardcode `live_spawn_mode="bootstrap"`) for cross-condition comparisons.
+Both `watch_model.py` and `eval_checkpoints.py` auto-read `obs_config`, `vehicle_model`, `timing_profile`, and speed mode from `run_config.json` — no manual flags needed. Always evaluate random-spawn runs with fixed spawn (these scripts hardcode `live_spawn_mode="bootstrap"`) for cross-condition comparisons.
 
 **Why replay progress < training stats** (important for report):
 
@@ -75,7 +121,7 @@ Both `watch_model.py` and `eval_checkpoints.py` auto-read `obs_config`, `vehicle
 
 2. **Deterministic vs stochastic policy.** `model.predict(deterministic=True)` uses the Gaussian policy mean — the single most-likely action at each step. During training the agent samples from the distribution, which occasionally produces exploratory actions that happen to be better than the mean. In continuous racing control, stochastic actions near the mean can outperform the mean itself, particularly in corners where small perturbations help maintain traction. This is a known limitation of deterministic greedy evaluation in PPO.
 
-3. **Timing profile mismatch (now fixed).** `watch_model.py` previously defaulted to `legacy_60hz` regardless of training config. Agents trained on `det50ms` + `speed_factor=16` experience different effective physics at `legacy_60hz`, degrading performance. Both eval scripts now read timing from `run_config.json`.
+3. **Timing profile mismatch (now fixed).** `watch_model.py` previously defaulted to `legacy_60hz` regardless of training config. Agents trained on `det50ms` + Turbo (`speed_factor=16` compatibility value) experience different effective physics at `legacy_60hz`, degrading performance. Both eval scripts now read timing from `run_config.json`.
 
 **AI raceline collection (no BeamNG required for physics raceline; BeamNG required for AI collection):**
 ```powershell
@@ -116,7 +162,7 @@ Stop-Process -Id (Get-Content logs\remote\training_2.pid) -Force   # slot 2
 **Resume a specific run via CLI (when Flask is unavailable):**
 ```powershell
 # Write session config first, then launch without --fresh
-'{"car":"sbr","total_timesteps":400000,"speed_factor":16,"timing_profile":"det50ms","reward_config":"v21b","obs_config":"v2","spawn_mode":"bootstrap","fresh":false,"run_name":"<run_name>","max_damage":500,"debug_mode":false,"port":25252}' | Out-File -Encoding utf8 config\launcher_session.json
+'{"car":"sbr","total_timesteps":400000,"speed_mode":"turbo","speed_factor":16,"timing_profile":"det50ms","reward_config":"v21b","obs_config":"v2","spawn_mode":"bootstrap","fresh":false,"run_name":"<run_name>","max_damage":500,"debug_mode":false,"port":25252}' | Out-File -Encoding utf8 config\launcher_session.json
 python scripts\train\train_live_ppo_run.py --run-name <run_name> --car sbr --reward-config v21b --obs-config v2 --port 25252
 ```
 
@@ -201,11 +247,24 @@ All track data lives in `data/hirochi_track/`:
 
 ### Reward system
 
-Named presets live in `REWARD_CONFIGS` dict in `beamng_racing_env.py`. Select with `--reward-config v1` (or `v2`). Every component is returned in `reward_info` inside `step()` info dict, and `RewardComponentLogger` writes them all to TensorBoard under `reward/*`.
+Named presets live in `REWARD_CONFIGS` dict in `beamng_racing_env.py`. Select with `--reward-config v1` (or any other config key). Every component is returned in `reward_info` inside `step()` info dict, and `RewardComponentLogger` writes them to TensorBoard under `reward/*` or `env/*`.
 
 V1 vs V2 structural difference: V1 has a flat `speed_weight` bonus that partially cancels the curvature overspeed penalty. V2 removes the speed bonus entirely — progress reward implicitly incentivises speed.
 
 V2.1 configs (`v21a`, `v21b`) switch to a **physics curvature target** when `lateral_accel_budget_mps2` is not `None`: `v_target = sqrt(a_lat / max(κ, ε))` replaces the linear formula. The risk penalty is `(max(0, v/v_target − aggression))^power * weight`. V2.1-B adds a braking shortfall term: `max(0, (v²−v_target_80m²)/(2·a_brake) − 80 m) * weight`. All new penalty components appear in TensorBoard under `reward/*` automatically.
+
+V2.2 configs add the precomputed physics racing line from `data/hirochi_track/physics_raceline.json`.
+
+- `v22` is the stricter first version: centreline lateral penalty is disabled, the physics raceline becomes the lateral reference, and the raceline speed profile acts as an overspeed target.
+- `v22b` is the report-friendly **soft raceline prior** variant. It keeps V2.1-B traction/braking terms active, then adds weak raceline shaping: a 1.25 m lateral corridor, speed/heading/progress gates, decay from full line weight to 25% over 120k env steps, a penalty for slow "correct" line-following, and a small bonus for exceeding the raceline speed profile after a margin. The dissertation framing should be: the raceline provides prior knowledge about road-width usage, but progress and physically plausible speed remain the optimisation target.
+
+Report evidence for `v22b`:
+
+- Code/config: `src/beamng_rl/envs/beamng_racing_env.py`, `REWARD_CONFIGS["v22b"]`.
+- Rationale notes: `docs/RewardFunction.md`, section "V2.2-B Soft Racing-Line Prior".
+- Launcher wiring: `scripts/launcher/app.py` allow-list and both reward selectors in `scripts/launcher/templates/index.html`.
+- TensorBoard/export fields: `raceline_lateral_penalty`, `raceline_overspeed_penalty`, `raceline_slow_speed_penalty`, `raceline_baseline_speed_bonus`, `raceline_lateral_error_m`, `raceline_lateral_excess_m`, `raceline_target_speed_mps`, `raceline_speed_gate`, `raceline_heading_gate`, `raceline_decay_scale`, `raceline_effective_scale`.
+- Metrics export: `scripts/monitor/export_metrics.py` includes the new `v22b` reward/env tags.
 
 ### Observation space
 
@@ -235,7 +294,7 @@ Zero-initialised on reset. Gives the policy memory of its last action so it can 
 
 ### Timing profiles
 
-Always use `det50ms` + `speed_factor=16` for training. `legacy_60hz` crashes BeamNG after ~40 episodes.
+Use `det50ms` + Turbo for training. Turbo retains `speed_factor=16` as the compatibility value, but it is a max requested timing mode rather than a literal 16× training speed. Event-log timing for historical requested-16x runs is typically about 2–3× end-to-end PPO speed. `legacy_60hz` crashes BeamNG after ~40 episodes.
 
 | Profile | Physics step | Steps per action | Sim time per action |
 |---------|-------------|-----------------|-------------------|
@@ -258,7 +317,7 @@ Always use `det50ms` + `speed_factor=16` for training. `legacy_60hz` crashes Bea
 | C | etkc | v21b | `v21b_etk_16x_280ksteps` | 280,064 | **1353.5 m** | damage | ✅ done |
 | D | sbr | v21b | `v21b_subaru_16x_278ksteps` | 278,016 | 1303.5 m | max_steps | ✅ done |
 
-All conditions use `det50ms`, `speed_factor=16`. Full lap length is 2158 m (post kink-fix centreline). All trained with the correct 3D nearest-point projection and post-kink-fix centreline.
+All conditions use `det50ms` and the historical requested-16x Turbo setting. Full lap length is 2158 m (post kink-fix centreline). All trained with the correct 3D nearest-point projection and post-kink-fix centreline.
 
 ### Key findings from Phase 1
 
@@ -336,7 +395,7 @@ Override the slot 2 user folder with `$env:BEAMNG_USER_SLOT2` before starting Fl
 
 ## Config / session handoff
 
-The Flask launcher writes `config/launcher_session.json` (slot 1) or `config/launcher_session_2.json` (slot 2) before spawning the training script. Keys: `car`, `total_timesteps`, `speed_factor`, `timing_profile`, `reward_config`, `obs_config`, `spawn_mode`, `fresh`, `run_name`, `max_damage`, `debug_mode`, `port`, `beamng_user`.
+The Flask launcher writes `config/launcher_session.json` (slot 1) or `config/launcher_session_2.json` (slot 2) before spawning the training script. Keys: `car`, `total_timesteps`, `speed_mode`, `speed_factor`, `timing_profile`, `reward_config`, `obs_config`, `spawn_mode`, `fresh`, `run_name`, `max_damage`, `debug_mode`, `port`, `beamng_user`. `speed_factor` remains for backwards compatibility; new user-facing labels should say Turbo rather than 16x.
 
 The training script enforces guards on resume: vehicle, timing profile, and **obs space** must match `run_config.json` — mismatches abort training rather than silently corrupting weights (obs space mismatch would change input size, breaking loaded weights).
 
