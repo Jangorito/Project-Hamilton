@@ -39,6 +39,18 @@ TAGS = [
     "reward/physics_target_speed_mps",
     "reward/lateral_accel_required_mps2",
     "reward/braking_shortfall_m",
+    # v2.2-b soft raceline terms
+    "reward/raceline_lateral_penalty",
+    "reward/raceline_overspeed_penalty",
+    "reward/raceline_slow_speed_penalty",
+    "reward/raceline_baseline_speed_bonus",
+    "env/raceline_lateral_error_m",
+    "env/raceline_lateral_excess_m",
+    "env/raceline_target_speed_mps",
+    "env/raceline_speed_gate",
+    "env/raceline_heading_gate",
+    "env/raceline_decay_scale",
+    "env/raceline_effective_scale",
 ]
 
 CORE_TAGS = {
@@ -49,6 +61,8 @@ CORE_TAGS = {
     "reward/braking_shortfall_penalty",
     "reward/lateral_risk_ratio",
     "reward/physics_target_speed_mps",
+    "reward/raceline_lateral_penalty",
+    "reward/raceline_baseline_speed_bonus",
 }
 
 
