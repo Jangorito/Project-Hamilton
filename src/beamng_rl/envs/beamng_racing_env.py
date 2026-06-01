@@ -19,6 +19,12 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
+from beamng_rl.speed_modes import (
+    LEGACY_SPEED_FACTOR_LABEL,
+    is_supported_speed_factor,
+    speed_mode_from_factor,
+)
+
 try:
     from beamng_rl.bootstrap.beamng_setup import (
         HOST,
@@ -474,10 +480,12 @@ class BeamNGRacingEnv(gym.Env):
                 f"got {vehicle_model!r}"
             )
         self.vehicle_model = vehicle_model_value
-        self.speed_factor = int(speed_factor) if speed_factor is not None else None
-        if self.speed_factor is not None and self.speed_factor not in (1, 2, 4, 8, 16, 32):
+        self.speed_mode = speed_mode_from_factor(speed_factor)
+        self.speed_factor = self.speed_mode.requested_factor if speed_factor is not None else None
+        if speed_factor is not None and not is_supported_speed_factor(speed_factor):
             raise ValueError(
-                "speed_factor must be one of 1, 2, 4, 8, 16, 32, "
+                f"speed_factor must be one of {LEGACY_SPEED_FACTOR_LABEL}; "
+                "8/16/32 are legacy Turbo aliases, "
                 f"got {speed_factor!r}"
             )
         self.timing_profile = (
@@ -494,7 +502,7 @@ class BeamNGRacingEnv(gym.Env):
             raise ValueError("legacy_60hz timing only supports 1x speed.")
         self._base_steps_per_second = 60
         self._target_sim_time_per_action_s = self.steps_per_action / self._base_steps_per_second
-        self._desired_speed = self.speed_factor if self.speed_factor is not None else 1
+        self._desired_speed = self.speed_mode.requested_factor if self.speed_factor is not None else 1
         if self.timing_profile == "legacy_60hz":
             # Legacy/real-time timing: keep the same 60 Hz step grid that old
             # checkpoints were trained on.
@@ -520,7 +528,8 @@ class BeamNGRacingEnv(gym.Env):
         )
         if abs(self._sim_time_per_action_s - self._target_sim_time_per_action_s) > (1.0 / 120.0):
             print(
-                f"WARNING: speed_factor={self._desired_speed} uses "
+                f"WARNING: speed_mode={self.speed_mode.key} uses "
+                f"target_speed={self._desired_speed}x with "
                 f"effective_steps={self._effective_steps_per_action}; "
                 f"sim_time_per_action={self._sim_time_per_action_s:.3f}s "
                 f"instead of target {self._target_sim_time_per_action_s:.3f}s."
@@ -1407,6 +1416,7 @@ class BeamNGRacingEnv(gym.Env):
                 print(
                     "BeamNG deterministic mode set: "
                     f"timing_profile={self.timing_profile}, "
+                    f"speed_mode={self.speed_mode.key}, "
                     f"target_speed={self._desired_speed}x, "
                     f"steps_per_second={self._beamng_steps_per_second}, "
                     f"beamng_speed_factor={self._beamng_speed_factor}, "

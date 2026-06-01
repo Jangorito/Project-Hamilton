@@ -55,6 +55,13 @@ except ImportError as exc:
 
 from beamng_rl.envs.beamng_racing_env import REWARD_CONFIGS, BeamNGRacingEnv, RewardConfig
 from beamng_rl.envs.observation_builder import OBS_CONFIGS
+from beamng_rl.speed_modes import (
+    LEGACY_SPEED_FACTOR_LABEL,
+    existing_speed_tokens,
+    is_supported_speed_factor,
+    speed_mode_from_config,
+    speed_mode_from_factor,
+)
 from beamng_rl.training.callbacks import (
     BeamNGTrainingHudCallback,
     RewardComponentLogger,
@@ -353,7 +360,12 @@ def _build_run_config(
         "env":     {
             **env_config,
             "vehicle_model": vehicle_model,
-            "speed_factor": speed_factor,
+            "speed_factor": speed_mode_from_factor(speed_factor).requested_factor
+            if speed_factor is not None
+            else None,
+            "speed_mode": speed_mode_from_factor(speed_factor).key,
+            "speed_label": speed_mode_from_factor(speed_factor).short_label,
+            "speed_note": speed_mode_from_factor(speed_factor).note,
             "timing_profile": timing_profile,
             "spawn_mode": spawn_mode,
             "beamng_training_hud": beamng_training_hud,
@@ -378,9 +390,9 @@ def _ensure_car_suffix(
     if suffix not in tokens:
         base = f"{base}_{suffix}"
         tokens = base.lower().replace("-", "_").split("_")
-    speed_value = int(speed_factor) if speed_factor is not None else 1
-    speed_suffix = f"{speed_value}x"
-    if speed_value > 1 and speed_suffix not in tokens:
+    speed_mode = speed_mode_from_factor(speed_factor)
+    speed_suffix = speed_mode.run_suffix
+    if speed_suffix and not any(token in existing_speed_tokens() for token in tokens):
         base = f"{base}_{speed_suffix}"
         tokens = base.lower().replace("-", "_").split("_")
     if obs_key == "v2" and "obs2" not in tokens:
@@ -401,11 +413,7 @@ def _run_vehicle_model(config: dict[str, Any]) -> str | None:
 
 def _run_speed_factor(config: dict[str, Any]) -> int:
     env = _as_mapping(config.get("env"))
-    try:
-        speed_factor = int(env.get("speed_factor", 1) or 1)
-    except (TypeError, ValueError):
-        return 1
-    return speed_factor if speed_factor in (1, 2, 4, 8, 16, 32) else 1
+    return speed_mode_from_config(env).requested_factor
 
 
 def _run_timing_profile(config: dict[str, Any]) -> str:
@@ -498,9 +506,13 @@ def main() -> None:
     max_damage      = float(session.get("max_damage", ENV_CONFIG["max_damage"]))
     fresh           = args.fresh or bool(session.get("fresh", False))
     _sf             = session.get("speed_factor")
-    speed_factor    = int(_sf) if _sf is not None else None
-    if speed_factor is not None and speed_factor not in (1, 2, 4, 8, 16, 32):
-        sys.exit("Error: speed_factor must be one of 1, 2, 4, 8, 16, 32.")
+    if _sf is not None and not is_supported_speed_factor(_sf):
+        sys.exit(
+            f"Error: speed_factor must be one of {LEGACY_SPEED_FACTOR_LABEL} "
+            "(8/16/32 are legacy Turbo aliases)."
+        )
+    speed_mode      = speed_mode_from_config(session)
+    speed_factor    = speed_mode.requested_factor if (_sf is not None or session.get("speed_mode")) else None
     timing_profile = str(session.get("timing_profile", "")).strip().lower() or None
     if timing_profile is not None and timing_profile not in ("legacy_60hz", "det50ms"):
         sys.exit("Error: timing_profile must be 'legacy_60hz' or 'det50ms'.")
@@ -548,9 +560,9 @@ def main() -> None:
     run_name_hint = args.run_name or session.get("run_name", "") or "_".join(_default_hint_parts)
 
     if session:
-        sf_label = f"{speed_factor}x" if speed_factor is not None else "default"
+        sf_label = speed_mode.short_label if speed_factor is not None else "default"
         print(f"Launcher config: car={vehicle_model}, steps={total_timesteps}, "
-              f"max_damage={max_damage}, fresh={fresh}, speed_factor={sf_label}, "
+              f"max_damage={max_damage}, fresh={fresh}, speed_mode={sf_label}, "
               f"reward_config={reward_key}, spawn_mode={spawn_mode}")
 
     if not CENTRELINE_PATH.is_file():
@@ -646,7 +658,9 @@ def main() -> None:
         print(f"\nReward config  : {reward_key}")
         print(f"Obs config     : {obs_key} ({OBS_CONFIGS[obs_key]} features)")
         print(f"Vehicle        : {vehicle_model}")
-        print(f"Speed factor   : {speed_factor if speed_factor is not None else 'default'}x")
+        print(f"Speed mode     : {sf_label}")
+        if speed_factor is not None and speed_mode.note:
+            print(f"Speed note     : {speed_mode.note}")
         print(f"Timing profile : {timing_profile}")
         print(f"Spawn mode     : {spawn_mode}")
         print(f"BeamNG HUD     : {'enabled' if beamng_hud_enabled else 'disabled'}")
