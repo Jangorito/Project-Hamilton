@@ -41,6 +41,27 @@ Condition A best checkpoint (2419.9 m) = **1.125 laps** — agent completed the 
 
 ---
 
+## Phase 2 & 3 Data (supplementary — see placement notes in section briefs)
+
+**Phase 2 — exploratory follow-up runs (not part of the 2×2 factorial):**
+
+| Run | Config | Steps | ep_rew_mean | Rollout progress | Notes |
+|---|---|---|---|---|---|
+| obs_v2 | SBR+v21b+prev_action (obs_v2) | ~344k | **889** (highest of any condition) | 1005.9 m | Fragmented sessions — cannot be compared directly to Phase 1 |
+| respawn | SBR+v21b+random_spawn | ~485k | 522 | N/A | Fixed-spawn eval not yet run — cross-condition comparison invalid |
+
+obs_v2 adds two features to the observation: previous steering and previous throttle/brake action (zero-initialised on reset). Motivation: Phase 1 showed oscillatory steering under v21b, which obs_v2 aimed to reduce by giving the policy memory of its last action.
+
+**Phase 3 — in-progress at submission:**
+- v22b (SBR+v21b+obs_v2+soft_raceline): training was ~20% complete at submission. No reportable results.
+
+**Placement rules for Claude:**
+- Phase 2: brief mention in Section 5 (exploratory, clearly flagged), supplementary paragraph in Section 6 (with fragmented-sessions caveat), and as supporting evidence in Section 7 Discussion.
+- Phase 3: Section 8 future work only — no results to report.
+- Do NOT treat Phase 2/3 as part of the designed experiment. Do NOT present obs_v2's 889 ep_rew_mean as a clean result — always qualify it as coming from fragmented sessions.
+
+---
+
 ## Key Findings
 
 - v21b did not improve either vehicle. ETK loss: −276.8 m (B 1523.2 → C 1246.4). SBR loss: −1389.7 m (A 2419.9 → D 1030.2).
@@ -138,6 +159,8 @@ Key challenges:
 ### 5. Experiments (~250w)
 List the four conditions with exact step counts (A: 278,353 | B: 278,670 | C: 280,064 | D: 278,016). All conditions: det50ms timing, fixed bootstrap spawn, obs_v1 (12 features), 500-step max episode. Evaluation protocol: every 8k-step checkpoint + final model, deterministic, fixed spawn, 500 steps. Baselines: BeamNG CPU AI (80.39 s), physics racing line (~69.3 s), full lap (2150 m). Note why best checkpoint not final.
 
+At the end, one short paragraph on Phase 2 supplementary runs: "Beyond the factorial, two exploratory conditions were run to investigate specific findings from Phase 1..." — mention obs_v2 and respawn briefly, flag that obs_v2 training was fragmented and respawn lacks a fixed-spawn evaluation, so neither can be compared directly to Phase 1 conditions.
+
 ### 6. Results (~600w)
 Lead with the main results table (use data above). Then narrate each headline finding:
 - A completes 1.125 laps — first condition to exceed the full lap distance.
@@ -148,15 +171,19 @@ Lead with the main results table (use data above). Then narrate each headline fi
 - Interaction: magnitude of v21b penalty ~5× larger for SBR.
 Reference figures/tables that should appear here: learning curves (ep_rew_mean over steps, 4 conditions), bar chart of best-checkpoint progress with 2150 m and AI reference marked.
 
+After the main findings, one supplementary paragraph on Phase 2: report obs_v2's ep_rew_mean of 889 (highest of any condition) and 1005.9 m rollout progress, but explicitly qualify that training was conducted across fragmented sessions and cannot be compared directly to the Phase 1 conditions. Do not report the respawn run — no valid fixed-spawn evaluation exists.
+
 ### 7. Discussion (~500w)
 *RQ1:* v21b did not improve learning progress — negative main effect for both vehicles. ETK −276.8 m, SBR −1389.7 m.
 
 *RQ2:* Strong vehicle × reward interaction. Interpretable via traction-budget framing: SBR's aggressive policy under V1 continuously exceeded v21b's traction limit at `allowed_aggression=1.0`; ETK's more progressive dynamics were within the same budget. This is not a failure of v21b — it reveals that `allowed_aggression` is vehicle-specific. A future condition (v21c, `allowed_aggression=1.15`) would test this directly.
 
+Use Phase 2 obs_v2 result (ep_rew_mean 889, highest of any condition) as supporting evidence here: the higher reward under obs_v2 suggests that giving the policy memory of its previous action reduces the steering oscillation that hurt v21b conditions — consistent with the interaction explanation. Flag that this is a preliminary finding from fragmented sessions, not a controlled comparison.
+
 *Limitations:* n=1 per condition; C and D hadn't fully converged at 278k steps; deterministic evaluation may underperform stochastic; lap completion not rewarded (agent has no incentive to finish circuits, only to accumulate dense progress).
 
 ### 8. Conclusion (~200w)
-Summarise what was asked and what was found. What worked: 2×2 factorial cleanly isolated vehicle and reward effects; Condition A achieved 1.125 laps. What could be improved: step budget for v21b convergence; n=1 limits statistical confidence; lap completion still unimplemented. Future work: (1) v21c with higher `allowed_aggression` for SBR; (2) lap completion bonus to shift from progress proxy to lap-time optimisation; (3) obs_v2 clean comparison (prev_action features).
+Summarise what was asked and what was found. What worked: 2×2 factorial cleanly isolated vehicle and reward effects; Condition A achieved 1.125 laps. What could be improved: step budget for v21b convergence; n=1 limits statistical confidence; lap completion still unimplemented. Future work: (1) v21c with higher `allowed_aggression` for SBR to recover SBR performance under physics reward; (2) lap completion bonus to shift from progress proxy to lap-time optimisation; (3) obs_v2 clean single-session comparison (prev_action features — preliminary results promising but unconfirmed); (4) v22b soft raceline prior (training was in progress at submission — introduces track-width usage as prior knowledge while keeping progress and traction budget as primary objectives).
 
 ---
 
