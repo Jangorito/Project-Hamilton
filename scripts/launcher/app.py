@@ -27,6 +27,14 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from beamng_rl.speed_modes import (
+    LEGACY_SPEED_FACTOR_LABEL,
+    existing_speed_tokens,
+    is_supported_speed_factor,
+    speed_mode_from_config,
+    speed_mode_from_factor,
+    speed_mode_payload,
+)
 from beamng_rl.training.run_manager import RunManager
 
 # ---------------------------------------------------------------------------
@@ -56,7 +64,6 @@ CAR_RUN_SUFFIXES = {
     "sbr": "subaru",
     "etkc": "etk",
 }
-SPEED_FACTORS = {1, 2, 4, 8, 16, 32}
 TIMING_PROFILES = {"legacy_60hz", "det50ms"}
 REWARD_CONFIG_KEYS = {"v1", "v2", "v21a", "v21b", "v22", "v22b"}
 OBS_CONFIG_KEYS = {"v1", "v2"}
@@ -316,7 +323,7 @@ def _get_active_run_info() -> dict:
 
 def _eta_seconds(current_steps: int, total_steps: int, speed_factor: int = 1) -> int:
     remaining = max(0, total_steps - current_steps)
-    fallback_rate = _STEPS_PER_SECOND_FALLBACK * max(1, int(speed_factor))
+    fallback_rate = _STEPS_PER_SECOND_FALLBACK * speed_mode_from_factor(speed_factor).eta_multiplier
     rate = _pace["rate"] if _pace["rate"] is not None else fallback_rate
     return int(remaining / rate)
 
@@ -373,18 +380,10 @@ def _run_vehicle_model(run_name: str) -> str | None:
     return car if car in CAR_LABELS else None
 
 
-def _normalize_speed_factor(value) -> int:
-    try:
-        speed_factor = int(value)
-    except (TypeError, ValueError):
-        return 1
-    return speed_factor if speed_factor in SPEED_FACTORS else 1
-
-
 def _run_speed_factor(run_name: str) -> int:
     config = rm.load_config(run_name)
     env = config.get("env", {})
-    return _normalize_speed_factor(env.get("speed_factor", 1))
+    return speed_mode_from_config(env).requested_factor
 
 
 def _run_timing_profile(run_name: str) -> str:
@@ -409,14 +408,17 @@ def _requested_timing_profile(run_name: str, speed_factor: int) -> str:
 
 def _run_details(run_name: str) -> dict:
     car = _run_vehicle_model(run_name)
-    speed_factor = _run_speed_factor(run_name)
+    config = rm.load_config(run_name)
+    env = config.get("env", {}) if isinstance(config.get("env"), dict) else {}
+    speed_mode = speed_mode_from_config(env)
+    speed_factor = speed_mode.requested_factor
     timing_profile = _run_timing_profile(run_name)
     return {
         "car": car,
         "car_label": CAR_LABELS.get(car, "Unknown vehicle"),
         "has_vehicle_metadata": car is not None,
         "speed_factor": speed_factor,
-        "speed_label": f"{speed_factor}x",
+        **speed_mode_payload(speed_mode),
         "timing_profile": timing_profile,
     }
 
@@ -436,8 +438,9 @@ def _ensure_car_suffix(
     if suffix not in tokens:
         base = f"{base}_{suffix}"
         tokens = base.lower().replace("-", "_").split("_")
-    speed_suffix = f"{speed_factor}x"
-    if speed_factor > 1 and speed_suffix not in tokens:
+    speed_mode = speed_mode_from_factor(speed_factor)
+    speed_suffix = speed_mode.run_suffix
+    if speed_suffix and not any(token in existing_speed_tokens() for token in tokens):
         base = f"{base}_{speed_suffix}"
         tokens = base.lower().replace("-", "_").split("_")
     if obs_config == "v2" and "obs2" not in tokens:
@@ -504,7 +507,8 @@ def api_status():
     run_info = _get_active_run_info()
     session = _load_session_config()
     car = str(session.get("car", "sbr")).strip().lower()
-    speed_factor = _normalize_speed_factor(session.get("speed_factor", 1))
+    speed_mode = speed_mode_from_config(session)
+    speed_factor = speed_mode.requested_factor
     timing_profile = str(session.get("timing_profile", "")).strip().lower()
     if timing_profile not in TIMING_PROFILES:
         timing_profile = _fresh_timing_profile(speed_factor)
@@ -525,6 +529,7 @@ def api_status():
         "max_damage": session.get("max_damage"),
         "prev_max_damage": session.get("prev_max_damage"),
         "speed_factor": speed_factor,
+        **speed_mode_payload(speed_mode),
         "timing_profile": timing_profile,
         "reward_config": session.get("reward_config", "v1"),
         "obs_config": session.get("obs_config", "v1"),
@@ -595,15 +600,17 @@ def api_launch():
         return jsonify({"ok": False, "message": str(exc)}), 400
     stream = bool(data.get("stream", mode == "training"))
     max_damage = float(data.get("max_damage", 500.0))
-    try:
-        speed_factor = int(data.get("speed_factor", 1))
-    except (TypeError, ValueError):
-        speed_factor = 0
-    if speed_factor not in SPEED_FACTORS:
+    raw_speed_factor = data.get("speed_factor", 1)
+    if not is_supported_speed_factor(raw_speed_factor):
         return jsonify({
             "ok": False,
-            "message": f"Unknown speed factor {speed_factor!r}. Choose one of: {sorted(SPEED_FACTORS)}",
+            "message": (
+                f"Unknown speed factor {raw_speed_factor!r}. Choose one of: "
+                f"{LEGACY_SPEED_FACTOR_LABEL} (8/16/32 are legacy Turbo aliases)."
+            ),
         }), 400
+    speed_mode = speed_mode_from_factor(raw_speed_factor)
+    speed_factor = speed_mode.requested_factor
     # Reward config key ("v1" or "v2"). Written into launcher_session.json so
     # train_live_ppo_run.py picks it up without needing a CLI flag from schtasks.
     reward_config = str(data.get("reward_config", "v1"))
@@ -638,6 +645,7 @@ def api_launch():
             "stream": stream,
             "max_damage": max_damage,
             "speed_factor": speed_factor,
+            **speed_mode_payload(speed_mode),
             "timing_profile": timing_profile,
             "reward_config": reward_config,
             "obs_config": obs_config,
@@ -692,6 +700,7 @@ def api_launch():
         "stream": stream,
         "max_damage": max_damage,
         "speed_factor": speed_factor,
+        **speed_mode_payload(speed_mode),
         "timing_profile": timing_profile,
         "reward_config": reward_config,
         "obs_config": obs_config,
@@ -720,7 +729,7 @@ def api_launch():
         "ok": True,
         "message": (
             f"Training started: {CAR_LABELS[car]}, {timesteps:,} steps, "
-            f"{speed_factor}x speed, reward {reward_config}{spawn_label}{stream_label}.{obs_warning}"
+            f"{speed_mode.short_label} speed, reward {reward_config}{spawn_label}{stream_label}.{obs_warning}"
         ),
     })
 
@@ -1173,7 +1182,8 @@ def api_2_status():
     run_info = _get_active_run_info_2()
     session = _load_slot2_session()
     car = str(session.get("car", "etkc")).strip().lower()
-    speed_factor = _normalize_speed_factor(session.get("speed_factor", 1))
+    speed_mode = speed_mode_from_config(session)
+    speed_factor = speed_mode.requested_factor
     eta = _eta_seconds(
         run_info["current_steps"],
         run_info["total_steps"],
@@ -1189,6 +1199,7 @@ def api_2_status():
         "max_damage": session.get("max_damage"),
         "prev_max_damage": session.get("prev_max_damage"),
         "speed_factor": speed_factor,
+        **speed_mode_payload(speed_mode),
         "reward_config": session.get("reward_config", "v1"),
         "car": car,
         "car_label": CAR_LABELS.get(car, car),
@@ -1220,12 +1231,17 @@ def api_2_launch():
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 400
     max_damage = float(data.get("max_damage", 500.0))
-    try:
-        speed_factor = int(data.get("speed_factor", 2))
-    except (TypeError, ValueError):
-        speed_factor = 2
-    if speed_factor not in SPEED_FACTORS:
-        return jsonify({"ok": False, "message": f"Unknown speed factor {speed_factor!r}."}), 400
+    raw_speed_factor = data.get("speed_factor", 16)
+    if not is_supported_speed_factor(raw_speed_factor):
+        return jsonify({
+            "ok": False,
+            "message": (
+                f"Unknown speed factor {raw_speed_factor!r}. Choose one of: "
+                f"{LEGACY_SPEED_FACTOR_LABEL} (8/16/32 are legacy Turbo aliases)."
+            ),
+        }), 400
+    speed_mode = speed_mode_from_factor(raw_speed_factor)
+    speed_factor = speed_mode.requested_factor
     reward_config = str(data.get("reward_config", "v1"))
     if reward_config not in REWARD_CONFIG_KEYS:
         return jsonify({"ok": False, "message": f"Unknown reward config {reward_config!r}."}), 400
@@ -1266,6 +1282,7 @@ def api_2_launch():
         "total_timesteps": timesteps,
         "max_damage": max_damage,
         "speed_factor": speed_factor,
+        **speed_mode_payload(speed_mode),
         "timing_profile": timing_profile,
         "reward_config": reward_config,
         "obs_config": obs_config_2,
@@ -1309,7 +1326,7 @@ def api_2_launch():
         "ok": True,
         "message": (
             f"Run 2 started: {CAR_LABELS[car]}, {timesteps:,} steps, "
-            f"{speed_factor}x speed, reward {reward_config}."
+            f"{speed_mode.short_label} speed, reward {reward_config}."
         ),
     })
 

@@ -891,14 +891,14 @@
         </div>
       </div>
 
-      <!-- Physics speed factor -->
+      <!-- Physics speed mode -->
       <div class="panel-section" id="speed-section">
-        <div class="section-label">Physics Speed Factor</div>
+        <div class="section-label">Physics Speed Mode</div>
         <div class="slider-row">
-          <input type="range" id="speed-slider" min="0" max="5" step="1" value="0">
+          <input type="range" id="speed-slider" min="0" max="3" step="1" value="3">
           <div class="slider-readout">
-            <div class="slider-steps" id="speed-val">1x</div>
-            <div class="slider-time" id="speed-sub">real-time</div>
+            <div class="slider-steps" id="speed-val">Turbo</div>
+            <div class="slider-time" id="speed-sub">max request; observed about 2-3x training speed</div>
           </div>
         </div>
       </div>
@@ -1353,12 +1353,12 @@
       </div>
 
       <div class="panel-section">
-        <div class="section-label">Physics Speed Factor</div>
+        <div class="section-label">Physics Speed Mode</div>
         <div class="slider-row">
-          <input type="range" id="speed-slider-2" min="0" max="5" step="1" value="1">
+          <input type="range" id="speed-slider-2" min="0" max="3" step="1" value="3">
           <div class="slider-readout">
-            <div class="slider-steps" id="speed-val-2">2x</div>
-            <div class="slider-time" id="speed-sub-2">target 2× faster than real-time</div>
+            <div class="slider-steps" id="speed-val-2">Turbo</div>
+            <div class="slider-time" id="speed-sub-2">max request; observed about 2-3x training speed</div>
           </div>
         </div>
       </div>
@@ -1456,7 +1456,13 @@ const STEPS_PER_SECOND_FALLBACK = 27000 / 7200;
 let measuredStepsPerSecond = null;
 const DEFAULT_TIMESTEPS = 100000;
 
-const SPEED_FACTORS = [1, 2, 4, 8, 16, 32];
+const SPEED_MODES = [
+  { key: 'realtime', factor: 1,  label: '1x',    subtitle: 'real-time', suffix: '',      eta: 1 },
+  { key: 'fast2',    factor: 2,  label: '2x',    subtitle: 'target 2x faster than real-time', suffix: '2x', eta: 2 },
+  { key: 'fast4',    factor: 4,  label: '4x',    subtitle: 'target 4x faster than real-time', suffix: '4x', eta: 4 },
+  { key: 'turbo',    factor: 16, label: 'Turbo', subtitle: 'max request; observed about 2-3x training speed', suffix: 'turbo', eta: 3 },
+];
+const LEGACY_TURBO_FACTORS = [8, 16, 32];
 const CAR_LABELS = {
   sbr: 'SBR4 Track',
   etkc: 'ETK K-Series Trackday A',
@@ -1468,12 +1474,27 @@ const CAR_RUN_SUFFIXES = {
 
 function selectedSpeedFactor() {
   const slider = document.getElementById('speed-slider');
-  const sf = SPEED_FACTORS[parseInt(slider.value)];
-  return Number.isFinite(sf) ? sf : 1;
+  return selectedSpeedMode().factor;
+}
+
+function selectedSpeedMode() {
+  const slider = document.getElementById('speed-slider');
+  return SPEED_MODES[parseInt(slider.value)] ?? SPEED_MODES[0];
+}
+
+function speedModeFromFactor(sf) {
+  const numeric = Number.parseInt(sf, 10);
+  if (LEGACY_TURBO_FACTORS.includes(numeric)) return SPEED_MODES.find(mode => mode.key === 'turbo');
+  return SPEED_MODES.find(mode => mode.factor === numeric) ?? SPEED_MODES[0];
+}
+
+function speedModeIndexFromFactor(sf) {
+  const mode = speedModeFromFactor(sf);
+  return Math.max(0, SPEED_MODES.findIndex(candidate => candidate.key === mode.key));
 }
 
 function stepsPerSecond() {
-  return measuredStepsPerSecond ?? (STEPS_PER_SECOND_FALLBACK * selectedSpeedFactor());
+  return measuredStepsPerSecond ?? (STEPS_PER_SECOND_FALLBACK * selectedSpeedMode().eta);
 }
 
 function normalizeTimesteps(value) {
@@ -1610,14 +1631,14 @@ function initSpeedSlider() {
 
 function updateSpeedDisplay() {
   const idx = parseInt(document.getElementById('speed-slider').value);
-  const sf = SPEED_FACTORS[idx];
-  document.getElementById('speed-val').textContent = sf + 'x';
+  const mode = SPEED_MODES[idx] ?? SPEED_MODES[0];
+  document.getElementById('speed-val').textContent = mode.label;
   updateSliderDisplay();
-  document.getElementById('speed-sub').textContent = sf === 1 ? 'real-time' : 'target ' + sf + '× faster than real-time';
+  document.getElementById('speed-sub').textContent = mode.subtitle;
 }
 
 function setSpeedSliderFromValue(sf) {
-  const idx = SPEED_FACTORS.indexOf(sf);
+  const idx = speedModeIndexFromFactor(sf);
   if (idx !== -1) {
     document.getElementById('speed-slider').value = idx;
     updateSpeedDisplay();
@@ -1680,15 +1701,15 @@ function setRunMode(mode) {
 
 function suggestedFreshRunName() {
   const suffix = CAR_RUN_SUFFIXES[selectedCar()] || selectedCar();
-  const speed = selectedSpeedFactor();
-  const speedSuffix = speed > 1 ? `_${speed}x` : '';
+  const speedMode = selectedSpeedMode();
+  const speedSuffix = speedMode.suffix ? `_${speedMode.suffix}` : '';
   const obsSuffix = selectedObsConfig() === 'v2' ? '_obs2' : '';
   const spawnSuffix = selectedSpawnMode() === 'random_checkpoint' ? '_respawn' : '';
   return `${selectedRewardConfig()}_${suffix}${speedSuffix}${obsSuffix}${spawnSuffix}_${formatStepSuffix(selectedTimesteps())}`;
 }
 
 function isAutoFreshRunName(value) {
-  return /^(v1|v2|v21a|v21b|v22|v22b)_(subaru|etk)(_(2|4|8|16|32)x)?(_obs2)?(_respawn)?(_\d+(k|m)?steps)?$/i.test(value.trim());
+  return /^(v1|v2|v21a|v21b|v22|v22b)_(subaru|etk)(_(2|4|8|16|32)x|_turbo)?(_obs2)?(_respawn)?(_\d+(k|m)?steps)?$/i.test(value.trim());
 }
 
 function updateFreshNameSuggestion() {
@@ -1786,7 +1807,7 @@ async function pollStatus() {
     }
 
     document.getElementById('training-car-title').textContent = d.is_training
-      ? `Training: ${d.car_label || CAR_LABELS[d.car] || 'Selected car'} in ${d.speed_factor || 1}x speed`
+      ? `Training: ${d.car_label || CAR_LABELS[d.car] || 'Selected car'} in ${d.speed_label || speedModeFromFactor(d.speed_factor).label} speed`
       : 'No active training';
 
     // Progress bar
@@ -1891,7 +1912,7 @@ async function launch() {
   const timesteps    = selectedTimesteps();
   const stream       = mode === 'training' || document.getElementById('stream-toggle').checked;
   const maxDamage    = parseFloat(document.getElementById('damage-input').value) || 500;
-  const speedFactor  = SPEED_FACTORS[parseInt(document.getElementById('speed-slider').value)];
+  const speedFactor  = selectedSpeedFactor();
   const rewardConfig = document.querySelector('input[name="reward"]:checked').value;
   const spawnMode    = selectedSpawnMode();
   const debug        = debugMode();
@@ -2367,8 +2388,12 @@ function selectedRunMode2() {
 }
 
 function selectedSpeedFactor2() {
+  return selectedSpeedMode2().factor;
+}
+
+function selectedSpeedMode2() {
   const idx = parseInt(document.getElementById('speed-slider-2').value);
-  return SPEED_FACTORS[idx] ?? 2;
+  return SPEED_MODES[idx] ?? SPEED_MODES.find(mode => mode.key === 'turbo');
 }
 
 function selectedTimesteps2() {
@@ -2384,8 +2409,8 @@ function selectedSpawnMode2() {
 
 function suggestedFreshRunName2() {
   const suffix = CAR_RUN_SUFFIXES[selectedCar2()] || selectedCar2();
-  const speed = selectedSpeedFactor2();
-  const speedSuffix = speed > 1 ? `_${speed}x` : '';
+  const speedMode = selectedSpeedMode2();
+  const speedSuffix = speedMode.suffix ? `_${speedMode.suffix}` : '';
   const obsSuffix2 = selectedObsConfig2() === 'v2' ? '_obs2' : '';
   const spawnSuffix2 = selectedSpawnMode2() === 'random_checkpoint' ? '_respawn' : '';
   return `${selectedRewardConfig2()}_${suffix}${speedSuffix}${obsSuffix2}${spawnSuffix2}_${formatStepSuffix(selectedTimesteps2())}`;
@@ -2421,8 +2446,8 @@ function initSlider2() {
 
 function updateSliderDisplay2() {
   const val = selectedTimesteps2();
-  const sf  = selectedSpeedFactor2();
-  const hours = val / (STEPS_PER_SECOND_FALLBACK * sf) / 3600;
+  const speedMode = selectedSpeedMode2();
+  const hours = val / (STEPS_PER_SECOND_FALLBACK * speedMode.eta) / 3600;
   document.getElementById('steps-val-2').textContent  = val.toLocaleString();
   document.getElementById('steps-time-2').textContent = `~${hours.toFixed(1)} hours`;
 }
@@ -2438,9 +2463,9 @@ function initSpeedSlider2() {
 
 function updateSpeedDisplay2() {
   const idx = parseInt(document.getElementById('speed-slider-2').value);
-  const sf  = SPEED_FACTORS[idx];
-  document.getElementById('speed-val-2').textContent = sf + 'x';
-  document.getElementById('speed-sub-2').textContent = sf === 1 ? 'real-time' : `target ${sf}× faster than real-time`;
+  const mode = SPEED_MODES[idx] ?? SPEED_MODES[0];
+  document.getElementById('speed-val-2').textContent = mode.label;
+  document.getElementById('speed-sub-2').textContent = mode.subtitle;
   updateSliderDisplay2();
 }
 
@@ -2474,7 +2499,7 @@ async function pollStatus2() {
     document.getElementById('run-tab-dot-2').className = 'run-tab-dot' + (d.is_training ? ' live' : '');
 
     document.getElementById('training-car-title-2').textContent = d.is_training
-      ? `Run 2: ${d.car_label || CAR_LABELS[d.car] || 'Selected car'} · ${d.speed_factor || 2}x`
+      ? `Run 2: ${d.car_label || CAR_LABELS[d.car] || 'Selected car'} · ${d.speed_label || speedModeFromFactor(d.speed_factor).label}`
       : 'No active Run 2 training';
 
     const pct = d.is_training && d.total_steps > 0
@@ -2507,7 +2532,7 @@ async function pollStatus2() {
     }
 
     if (!isTraining2 && d.speed_factor != null && !userTouchedSpeed2) {
-      const idx = SPEED_FACTORS.indexOf(d.speed_factor);
+      const idx = speedModeIndexFromFactor(d.speed_factor);
       if (idx !== -1) { document.getElementById('speed-slider-2').value = idx; updateSpeedDisplay2(); }
     }
     if (!isTraining2 && d.reward_config != null && !userTouchedReward2) {

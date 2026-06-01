@@ -67,7 +67,7 @@ python scripts\eval\watch_model.py --run v1_etk_2x
 python scripts\eval\eval_checkpoints.py --run v1_etk_2x     # → checkpoints_eval.csv
 python scripts\eval\log_live_rollout.py --run v1_etk_2x
 ```
-Both `watch_model.py` and `eval_checkpoints.py` auto-read `obs_config`, `vehicle_model`, `timing_profile`, and `speed_factor` from `run_config.json` — no manual flags needed. Always evaluate random-spawn runs with fixed spawn (these scripts hardcode `live_spawn_mode="bootstrap"`) for cross-condition comparisons.
+Both `watch_model.py` and `eval_checkpoints.py` auto-read `obs_config`, `vehicle_model`, `timing_profile`, and speed mode from `run_config.json` — no manual flags needed. Always evaluate random-spawn runs with fixed spawn (these scripts hardcode `live_spawn_mode="bootstrap"`) for cross-condition comparisons.
 
 **Why replay progress < training stats** (important for report):
 
@@ -75,7 +75,7 @@ Both `watch_model.py` and `eval_checkpoints.py` auto-read `obs_config`, `vehicle
 
 2. **Deterministic vs stochastic policy.** `model.predict(deterministic=True)` uses the Gaussian policy mean — the single most-likely action at each step. During training the agent samples from the distribution, which occasionally produces exploratory actions that happen to be better than the mean. In continuous racing control, stochastic actions near the mean can outperform the mean itself, particularly in corners where small perturbations help maintain traction. This is a known limitation of deterministic greedy evaluation in PPO.
 
-3. **Timing profile mismatch (now fixed).** `watch_model.py` previously defaulted to `legacy_60hz` regardless of training config. Agents trained on `det50ms` + `speed_factor=16` experience different effective physics at `legacy_60hz`, degrading performance. Both eval scripts now read timing from `run_config.json`.
+3. **Timing profile mismatch (now fixed).** `watch_model.py` previously defaulted to `legacy_60hz` regardless of training config. Agents trained on `det50ms` + Turbo (`speed_factor=16` compatibility value) experience different effective physics at `legacy_60hz`, degrading performance. Both eval scripts now read timing from `run_config.json`.
 
 **AI raceline collection (no BeamNG required for physics raceline; BeamNG required for AI collection):**
 ```powershell
@@ -116,7 +116,7 @@ Stop-Process -Id (Get-Content logs\remote\training_2.pid) -Force   # slot 2
 **Resume a specific run via CLI (when Flask is unavailable):**
 ```powershell
 # Write session config first, then launch without --fresh
-'{"car":"sbr","total_timesteps":400000,"speed_factor":16,"timing_profile":"det50ms","reward_config":"v21b","obs_config":"v2","spawn_mode":"bootstrap","fresh":false,"run_name":"<run_name>","max_damage":500,"debug_mode":false,"port":25252}' | Out-File -Encoding utf8 config\launcher_session.json
+'{"car":"sbr","total_timesteps":400000,"speed_mode":"turbo","speed_factor":16,"timing_profile":"det50ms","reward_config":"v21b","obs_config":"v2","spawn_mode":"bootstrap","fresh":false,"run_name":"<run_name>","max_damage":500,"debug_mode":false,"port":25252}' | Out-File -Encoding utf8 config\launcher_session.json
 python scripts\train\train_live_ppo_run.py --run-name <run_name> --car sbr --reward-config v21b --obs-config v2 --port 25252
 ```
 
@@ -201,11 +201,24 @@ All track data lives in `data/hirochi_track/`:
 
 ### Reward system
 
-Named presets live in `REWARD_CONFIGS` dict in `beamng_racing_env.py`. Select with `--reward-config v1` (or `v2`). Every component is returned in `reward_info` inside `step()` info dict, and `RewardComponentLogger` writes them all to TensorBoard under `reward/*`.
+Named presets live in `REWARD_CONFIGS` dict in `beamng_racing_env.py`. Select with `--reward-config v1` (or any other config key). Every component is returned in `reward_info` inside `step()` info dict, and `RewardComponentLogger` writes them to TensorBoard under `reward/*` or `env/*`.
 
 V1 vs V2 structural difference: V1 has a flat `speed_weight` bonus that partially cancels the curvature overspeed penalty. V2 removes the speed bonus entirely — progress reward implicitly incentivises speed.
 
 V2.1 configs (`v21a`, `v21b`) switch to a **physics curvature target** when `lateral_accel_budget_mps2` is not `None`: `v_target = sqrt(a_lat / max(κ, ε))` replaces the linear formula. The risk penalty is `(max(0, v/v_target − aggression))^power * weight`. V2.1-B adds a braking shortfall term: `max(0, (v²−v_target_80m²)/(2·a_brake) − 80 m) * weight`. All new penalty components appear in TensorBoard under `reward/*` automatically.
+
+V2.2 configs add the precomputed physics racing line from `data/hirochi_track/physics_raceline.json`.
+
+- `v22` is the stricter first version: centreline lateral penalty is disabled, the physics raceline becomes the lateral reference, and the raceline speed profile acts as an overspeed target.
+- `v22b` is the report-friendly **soft raceline prior** variant. It keeps V2.1-B traction/braking terms active, then adds weak raceline shaping: a 1.25 m lateral corridor, speed/heading/progress gates, decay from full line weight to 25% over 120k env steps, a penalty for slow "correct" line-following, and a small bonus for exceeding the raceline speed profile after a margin. The dissertation framing should be: the raceline provides prior knowledge about road-width usage, but progress and physically plausible speed remain the optimisation target.
+
+Report evidence for `v22b`:
+
+- Code/config: `src/beamng_rl/envs/beamng_racing_env.py`, `REWARD_CONFIGS["v22b"]`.
+- Rationale notes: `docs/RewardFunction.md`, section "V2.2-B Soft Racing-Line Prior".
+- Launcher wiring: `scripts/launcher/app.py` allow-list and both reward selectors in `scripts/launcher/templates/index.html`.
+- TensorBoard/export fields: `raceline_lateral_penalty`, `raceline_overspeed_penalty`, `raceline_slow_speed_penalty`, `raceline_baseline_speed_bonus`, `raceline_lateral_error_m`, `raceline_lateral_excess_m`, `raceline_target_speed_mps`, `raceline_speed_gate`, `raceline_heading_gate`, `raceline_decay_scale`, `raceline_effective_scale`.
+- Metrics export: `scripts/monitor/export_metrics.py` includes the new `v22b` reward/env tags.
 
 ### Observation space
 
@@ -235,7 +248,7 @@ Zero-initialised on reset. Gives the policy memory of its last action so it can 
 
 ### Timing profiles
 
-Always use `det50ms` + `speed_factor=16` for training. `legacy_60hz` crashes BeamNG after ~40 episodes.
+Use `det50ms` + Turbo for training. Turbo retains `speed_factor=16` as the compatibility value, but it is a max requested timing mode rather than a literal 16× training speed. Event-log timing for historical requested-16x runs is typically about 2–3× end-to-end PPO speed. `legacy_60hz` crashes BeamNG after ~40 episodes.
 
 | Profile | Physics step | Steps per action | Sim time per action |
 |---------|-------------|-----------------|-------------------|
@@ -258,7 +271,7 @@ Always use `det50ms` + `speed_factor=16` for training. `legacy_60hz` crashes Bea
 | C | etkc | v21b | `v21b_etk_16x_280ksteps` | 280,064 | **1353.5 m** | damage | ✅ done |
 | D | sbr | v21b | `v21b_subaru_16x_278ksteps` | 278,016 | 1303.5 m | max_steps | ✅ done |
 
-All conditions use `det50ms`, `speed_factor=16`. Full lap length is 2158 m (post kink-fix centreline). All trained with the correct 3D nearest-point projection and post-kink-fix centreline.
+All conditions use `det50ms` and the historical requested-16x Turbo setting. Full lap length is 2158 m (post kink-fix centreline). All trained with the correct 3D nearest-point projection and post-kink-fix centreline.
 
 ### Key findings from Phase 1
 
@@ -336,7 +349,7 @@ Override the slot 2 user folder with `$env:BEAMNG_USER_SLOT2` before starting Fl
 
 ## Config / session handoff
 
-The Flask launcher writes `config/launcher_session.json` (slot 1) or `config/launcher_session_2.json` (slot 2) before spawning the training script. Keys: `car`, `total_timesteps`, `speed_factor`, `timing_profile`, `reward_config`, `obs_config`, `spawn_mode`, `fresh`, `run_name`, `max_damage`, `debug_mode`, `port`, `beamng_user`.
+The Flask launcher writes `config/launcher_session.json` (slot 1) or `config/launcher_session_2.json` (slot 2) before spawning the training script. Keys: `car`, `total_timesteps`, `speed_mode`, `speed_factor`, `timing_profile`, `reward_config`, `obs_config`, `spawn_mode`, `fresh`, `run_name`, `max_damage`, `debug_mode`, `port`, `beamng_user`. `speed_factor` remains for backwards compatibility; new user-facing labels should say Turbo rather than 16x.
 
 The training script enforces guards on resume: vehicle, timing profile, and **obs space** must match `run_config.json` — mismatches abort training rather than silently corrupting weights (obs space mismatch would change input size, breaking loaded weights).
 
