@@ -58,7 +58,7 @@ CAR_RUN_SUFFIXES = {
 }
 SPEED_FACTORS = {1, 2, 4, 8, 16, 32}
 TIMING_PROFILES = {"legacy_60hz", "det50ms"}
-REWARD_CONFIG_KEYS = {"v1", "v2", "v21a", "v21b", "v22"}
+REWARD_CONFIG_KEYS = {"v1", "v2", "v21a", "v21b", "v22", "v22b"}
 OBS_CONFIG_KEYS = {"v1", "v2"}
 SPAWN_MODES = {"bootstrap", "random_checkpoint"}
 

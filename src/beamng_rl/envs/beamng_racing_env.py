@@ -107,6 +107,16 @@ class RewardConfig:
     raceline_lateral_weight: float = 0.15      # penalty per metre off the racing line
     raceline_overspeed_weight: float = 0.3     # penalty per m/s above profile speed
     raceline_speed_lookahead_m: float = 5.0    # read profile this far ahead (brake in time)
+    raceline_lateral_corridor_m: float = 0.0   # no line-distance penalty inside this band
+    raceline_overspeed_margin_mps: float = 0.0 # speed above profile tolerated before penalty
+    raceline_speed_gate_min_mps: float = 0.0   # below this, line proximity is not trusted
+    raceline_speed_gate_full_mps: float = 0.0  # at/above this, full line proximity weight
+    raceline_max_heading_error_rad: float = 0.0 # if >0, fade line term when poorly aligned
+    raceline_weight_decay_steps: int = 0       # anneal line term as training progresses
+    raceline_weight_final_scale: float = 1.0   # final multiplier after decay
+    raceline_slow_speed_penalty_weight: float = 0.0 # penalise slow "correct" line following
+    raceline_baseline_speed_bonus_weight: float = 0.0 # reward beating line speed baseline
+    raceline_baseline_speed_margin_mps: float = 0.0   # margin before baseline bonus begins
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +255,54 @@ REWARD_CONFIGS: dict[str, RewardConfig] = {
         raceline_lateral_weight=0.10,
         raceline_overspeed_weight=0.18,
         raceline_speed_lookahead_m=5.0,
+    ),
+    # V2.2-B — soft racing-line prior. This keeps V2.2's physics raceline data
+    # available, but deliberately makes the reference line less important than
+    # carrying useful speed and making progress. Report shorthand:
+    #
+    # - progress remains the primary objective (`progress_weight=1.0`);
+    # - V2.1-B traction/braking terms stay active as speed guardrails;
+    # - raceline distance is a tolerance corridor, not a single-pixel target;
+    # - line-distance shaping is speed/heading gated and annealed over training;
+    # - the raceline speed profile is treated as a baseline to outperform, not
+    #   as a hard cap, by combining a small overspeed margin with a positive
+    #   baseline-speed bonus.
+    "v22b": RewardConfig(
+        progress_weight=1.0,
+        speed_weight=0.0,
+        heading_error_weight=0.2,
+        lateral_error_weight=0.03,
+        off_track_penalty=10.0,
+        reverse_progress_penalty=2.0,
+        stuck_step_penalty=0.05,
+        action_smoothness_weight=0.4,
+        curvature_overspeed_weight=0.0,
+        curvature_target_speed_base=35.0,
+        curvature_target_speed_min=12.0,
+        curvature_speed_scale=700.0,
+        lateral_accel_budget_mps2=8.0,
+        min_corner_speed_mps=8.0,
+        max_straight_speed_mps=35.0,
+        curvature_epsilon=0.001,
+        allowed_aggression=1.0,
+        traction_budget_weight=3.0,
+        traction_budget_power=2.0,
+        braking_accel_budget_mps2=9.0,
+        braking_shortfall_weight=0.1,
+        raceline_path="data/hirochi_track/physics_raceline.json",
+        raceline_lateral_weight=0.06,
+        raceline_overspeed_weight=0.03,
+        raceline_speed_lookahead_m=5.0,
+        raceline_lateral_corridor_m=1.25,
+        raceline_overspeed_margin_mps=4.0,
+        raceline_speed_gate_min_mps=8.0,
+        raceline_speed_gate_full_mps=22.0,
+        raceline_max_heading_error_rad=0.45,
+        raceline_weight_decay_steps=120_000,
+        raceline_weight_final_scale=0.25,
+        raceline_slow_speed_penalty_weight=0.08,
+        raceline_baseline_speed_bonus_weight=0.06,
+        raceline_baseline_speed_margin_mps=1.0,
     ),
 }
 
@@ -471,6 +529,7 @@ class BeamNGRacingEnv(gym.Env):
         # Runtime counters are reset in reset(), but initial values keep the
         # object inspectable immediately after construction.
         self.current_step = 0
+        self.total_env_steps = 0
         self.previous_progress_m = 0.0
         self.previous_raw_progress_m = 0.0
         self.episode_start_progress_m = 0.0
@@ -614,6 +673,7 @@ class BeamNGRacingEnv(gym.Env):
         query = self.track.query(vehicle_state["pos"], vehicle_heading_rad=heading_rad)
 
         reward, reward_info = self._compute_reward(query, vehicle_state, action_delta=action_delta)
+        self.total_env_steps += 1
 
         self._last_action = action
 
@@ -883,25 +943,102 @@ class BeamNGRacingEnv(gym.Env):
         raceline_offset_m = 0.0
         raceline_lateral_error_m = 0.0
         raceline_target_speed_mps = 0.0
+        raceline_lateral_excess_m = 0.0
+        raceline_speed_gate = 1.0
+        raceline_heading_gate = 1.0
+        raceline_progress_gate = 1.0
+        raceline_decay_scale = 1.0
+        raceline_effective_scale = 1.0
         raceline_lateral_penalty = 0.0
         raceline_overspeed_penalty = 0.0
+        raceline_slow_speed_penalty = 0.0
+        raceline_baseline_speed_bonus = 0.0
         if self.raceline_reference is not None:
             raceline_offset_m = self.raceline_reference.offset_at(lap_progress)
             raceline_target_speed_mps = self.raceline_reference.target_speed_at(
                 lap_progress + config.raceline_speed_lookahead_m
             )
             raceline_lateral_error_m = lateral_error_m - raceline_offset_m
+            raceline_lateral_excess_m = max(
+                0.0,
+                abs(raceline_lateral_error_m) - config.raceline_lateral_corridor_m,
+            )
+            if config.raceline_speed_gate_full_mps > config.raceline_speed_gate_min_mps:
+                raceline_speed_gate = np.clip(
+                    (
+                        forward_speed_mps
+                        - config.raceline_speed_gate_min_mps
+                    )
+                    / (
+                        config.raceline_speed_gate_full_mps
+                        - config.raceline_speed_gate_min_mps
+                    ),
+                    0.0,
+                    1.0,
+                )
+            if config.raceline_max_heading_error_rad > 0.0:
+                raceline_heading_gate = np.clip(
+                    1.0 - abs(heading_error_rad) / config.raceline_max_heading_error_rad,
+                    0.0,
+                    1.0,
+                )
+            raceline_progress_gate = 1.0 if progress_delta_m > 0.0 else 0.0
+            if config.raceline_weight_decay_steps > 0:
+                decay_t = np.clip(
+                    self.total_env_steps / float(config.raceline_weight_decay_steps),
+                    0.0,
+                    1.0,
+                )
+                raceline_decay_scale = (
+                    1.0
+                    + (config.raceline_weight_final_scale - 1.0) * decay_t
+                )
+            raceline_effective_scale = (
+                raceline_speed_gate
+                * raceline_heading_gate
+                * raceline_progress_gate
+                * raceline_decay_scale
+            )
             raceline_lateral_penalty = (
-                abs(raceline_lateral_error_m) * config.raceline_lateral_weight
+                raceline_lateral_excess_m
+                * config.raceline_lateral_weight
+                * raceline_effective_scale
             )
             raceline_overspeed_penalty = (
-                max(0.0, forward_speed_mps - raceline_target_speed_mps)
+                max(
+                    0.0,
+                    forward_speed_mps
+                    - raceline_target_speed_mps
+                    - config.raceline_overspeed_margin_mps,
+                )
                 * config.raceline_overspeed_weight
+            )
+            if (
+                config.raceline_slow_speed_penalty_weight > 0.0
+                and abs(raceline_lateral_error_m) <= config.raceline_lateral_corridor_m
+            ):
+                slow_shortfall_mps = max(
+                    0.0,
+                    config.raceline_speed_gate_min_mps - forward_speed_mps,
+                )
+                raceline_slow_speed_penalty = (
+                    slow_shortfall_mps
+                    * config.raceline_slow_speed_penalty_weight
+                )
+            raceline_baseline_speed_bonus = (
+                max(
+                    0.0,
+                    forward_speed_mps
+                    - raceline_target_speed_mps
+                    - config.raceline_baseline_speed_margin_mps,
+                )
+                * config.raceline_baseline_speed_bonus_weight
             )
 
         reward = (
             progress_reward
             + speed_reward
+            + raceline_baseline_speed_bonus
             - heading_penalty
             - lateral_penalty
             - off_track_penalty
@@ -914,6 +1051,7 @@ class BeamNGRacingEnv(gym.Env):
             - braking_shortfall_penalty
             - raceline_lateral_penalty
             - raceline_overspeed_penalty
+            - raceline_slow_speed_penalty
         )
 
         reward_info = {
@@ -953,9 +1091,18 @@ class BeamNGRacingEnv(gym.Env):
             "braking_shortfall_penalty": float(braking_shortfall_penalty),
             "raceline_offset_m": float(raceline_offset_m),
             "raceline_lateral_error_m": float(raceline_lateral_error_m),
+            "raceline_lateral_excess_m": float(raceline_lateral_excess_m),
             "raceline_target_speed_mps": float(raceline_target_speed_mps),
+            "raceline_speed_gate": float(raceline_speed_gate),
+            "raceline_heading_gate": float(raceline_heading_gate),
+            "raceline_progress_gate": float(raceline_progress_gate),
+            "raceline_decay_scale": float(raceline_decay_scale),
+            "raceline_effective_scale": float(raceline_effective_scale),
             "raceline_lateral_penalty": float(raceline_lateral_penalty),
             "raceline_overspeed_penalty": float(raceline_overspeed_penalty),
+            "raceline_slow_speed_penalty": float(raceline_slow_speed_penalty),
+            "raceline_baseline_speed_bonus": float(raceline_baseline_speed_bonus),
+            "total_env_steps": int(self.total_env_steps),
             "total_reward": float(reward),
         }
         return float(reward), reward_info
