@@ -51,6 +51,7 @@ def _run_rollout(env: BeamNGRacingEnv, model: PPO, n_steps: int) -> tuple[float,
 
         if terminated or truncated:
             reason = str(info.get("termination_reason", "unknown"))
+            print(f"[ROLLOUT] episode ended: reason={reason} step={_}", flush=True)
             break
 
     return progress_m, reason, jumps
@@ -215,6 +216,7 @@ def main() -> None:
             CENTRELINE_PATH,
             use_mock=False,
             launch_beamng=True,
+            nogfx=True,
             live_spawn_mode="bootstrap",
             vehicle_id="ego_vehicle",
             vehicle_model=vehicle_model,
