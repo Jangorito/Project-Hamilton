@@ -12,6 +12,7 @@ import argparse
 import math
 import os
 import random
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,34 @@ from typing import Any, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
+
+
+def _reexec_with_repo_venv() -> None:
+    marker = "BEAMNG_RACELINE_VENV_REEXEC"
+    candidates = (
+        REPO_ROOT / "venv" / "Scripts" / "python.exe",
+        REPO_ROOT / ".venv" / "Scripts" / "python.exe",
+    )
+    venv_python = next((path for path in candidates if path.exists()), None)
+    if venv_python is None or os.environ.get(marker) == "1":
+        return
+
+    try:
+        current = Path(sys.executable).resolve(strict=False)
+        target = venv_python.resolve(strict=False)
+    except OSError:
+        return
+    if current == target:
+        return
+
+    print(f"Re-executing with repo venv Python: {venv_python}", flush=True)
+    os.environ[marker] = "1"
+    completed = subprocess.run([str(venv_python), *sys.argv])
+    raise SystemExit(completed.returncode)
+
+
+_reexec_with_repo_venv()
+
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
@@ -153,7 +182,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--max-laps",
         type=int,
         default=4,
-        help="Maximum projected laps to run per vehicle/aggression combo. Default: 4.",
+        help=(
+            "Maximum completed projected laps to run after the next start/finish "
+            "crossing. Raised as needed to include warmup and clean laps. Default: 4."
+        ),
     )
     parser.add_argument(
         "--max-sim-time",
@@ -237,12 +269,26 @@ def main() -> None:
     track = TrackCentreline.from_json(args.centreline, closed_loop=True)
     vehicles = _resolve_vehicles(args.vehicles)
     output_log_dir = args.log_dir or LOG_ROOT / datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_id = _current_windows_session_id()
+    if (
+        session_id == 0
+        and not args.nogfx
+        and not args.connect_existing
+    ):
+        print(
+            "Windows Session 0 detected; enabling --nogfx because desktop GPU "
+            "rendering is unavailable in service/SSH sessions."
+        )
+        args.nogfx = True
 
     print(f"Loaded centreline: {args.centreline}")
     print(f"Track length: {track.total_lap_length:.2f} m")
     print(f"Vehicles: {', '.join(vehicles)}")
     print(f"Aggressions: {', '.join(_aggression_label(v) for v in args.aggressions)}")
     print(f"Log dir: {output_log_dir}")
+    print(f"Python: {sys.executable}")
+    if session_id is not None:
+        print(f"Windows session: {session_id}")
 
     if args.dry_run:
         points = static_track_points(track)
@@ -254,18 +300,30 @@ def main() -> None:
     print(f"Using BeamNG home: {beamng_home}")
 
     from beamngpy import BeamNGpy, set_up_simple_logging
+    from beamngpy.logging import BNGDisconnectedError
 
     set_up_simple_logging()
-    bng = BeamNGpy(
-        args.host,
-        args.port,
-        home=str(beamng_home) if not args.connect_existing else None,
-        quit_on_close=not args.connect_existing,
-        nogpu=args.nogfx,
-    )
+    bng = _make_beamng(args, BeamNGpy, nogpu=bool(args.nogfx))
 
     try:
-        bng.open(launch=not args.connect_existing)
+        try:
+            bng.open(launch=not args.connect_existing)
+        except BNGDisconnectedError:
+            if args.connect_existing or args.nogfx or not _latest_beamng_log_has_no_graphics_adapter():
+                raise
+
+            print(
+                "BeamNG started but did not expose TechCom because no graphics "
+                "adapter was available. Retrying with --nogfx (-headless -gfx null)."
+            )
+            try:
+                bng.close()
+            except Exception:
+                pass
+            args.nogfx = True
+            bng = _make_beamng(args, BeamNGpy, nogpu=True)
+            bng.open(launch=True)
+
         _configure_beamng(bng, args)
 
         for vehicle_model in vehicles:
@@ -280,6 +338,52 @@ def main() -> None:
                 )
     finally:
         bng.close()
+
+
+def _make_beamng(args: argparse.Namespace, beamng_cls: Any, *, nogpu: bool) -> Any:
+    return beamng_cls(
+        args.host,
+        args.port,
+        home=str(resolve_beamng_home_from_path_or_env(args.beamng_home))
+        if not args.connect_existing
+        else None,
+        quit_on_close=not args.connect_existing,
+        nogpu=nogpu,
+    )
+
+
+def _current_windows_session_id() -> int | None:
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        session_id = ctypes.c_ulong()
+        ok = ctypes.windll.kernel32.ProcessIdToSessionId(
+            os.getpid(),
+            ctypes.byref(session_id),
+        )
+        return int(session_id.value) if ok else None
+    except Exception:
+        return None
+
+
+def _latest_beamng_log_has_no_graphics_adapter() -> bool:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        return False
+    log_path = (
+        Path(local_app_data)
+        / "BeamNG"
+        / "BeamNG.tech"
+        / "current"
+        / "beamng.log"
+    )
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")[-12_000:]
+    except OSError:
+        return False
+    return "Not able to find graphics adapter" in text
 
 
 def _run_combo(
@@ -301,6 +405,16 @@ def _run_combo(
     selected_lap = None
     selected_samples: list[TelemetrySample] = []
     selected_attempt_metadata: dict[str, Any] = {}
+    warmup_laps = max(0, int(args.warmup_laps))
+    clean_laps = max(1, int(args.clean_laps))
+    requested_max_laps = max(1, int(args.max_laps))
+    effective_max_laps = max(requested_max_laps, warmup_laps + clean_laps)
+    if effective_max_laps != requested_max_laps:
+        print(
+            f"Requested max_laps={requested_max_laps} cannot include "
+            f"{warmup_laps} warmup + {clean_laps} clean lap(s); "
+            f"running up to {effective_max_laps} projected laps."
+        )
 
     speed_factors = [float(value) for value in args.retry_speed_factors]
     for attempt_index, speed_factor in enumerate(speed_factors, start=1):
@@ -342,7 +456,7 @@ def _run_combo(
             min_speed_mps=float(args.min_line_speed),
             curvature_speed_scale=float(args.curvature_speed_scale),
             start_ramp_m=float(args.start_ramp_m),
-            laps=max(int(args.max_laps) + 1, 2),
+            laps=max(effective_max_laps + 1, 2),
         )
         print(
             "Line speed range: "
@@ -365,9 +479,9 @@ def _run_combo(
             vehicle,
             track=track,
             sample_hz=float(args.sample_hz),
-            warmup_laps=int(args.warmup_laps),
-            clean_laps=int(args.clean_laps),
-            max_laps=int(args.max_laps),
+            warmup_laps=warmup_laps,
+            clean_laps=clean_laps,
+            max_laps=effective_max_laps,
             max_sim_time_s=float(args.max_sim_time),
             abort_lateral_error_m=float(args.abort_lateral_error),
             abort_damage=float(args.abort_damage),
@@ -403,6 +517,10 @@ def _run_combo(
             "racerAwareness": False,
             "centreline": str(args.centreline),
             "trackLengthM": float(track.total_lap_length),
+            "warmupLaps": warmup_laps,
+            "cleanLaps": clean_laps,
+            "maxLapsRequested": requested_max_laps,
+            "maxLapsEffective": effective_max_laps,
         }
         summary_path = attempt_log_dir / "summary.json"
         write_lap_summary_json(
@@ -515,8 +633,8 @@ def _collect_samples(
     samples: list[TelemetrySample] = []
     previous_raw: float | None = None
     previous_unwrapped: float | None = None
-    initial_unwrapped: float | None = None
     target_unwrapped: float | None = None
+    first_full_lap: int | None = None
     sim_time_s = 0.0
     completed_lap_floor = -1
     stall_run_s = 0.0
@@ -544,9 +662,10 @@ def _collect_samples(
             total_lap_length_m=track.total_lap_length,
         )
         progress_delta = 0.0 if previous_unwrapped is None else unwrapped - previous_unwrapped
-        if initial_unwrapped is None:
-            initial_unwrapped = unwrapped
-            target_unwrapped = initial_unwrapped + max_laps * track.total_lap_length
+        if first_full_lap is None:
+            first_full_lap = int(math.ceil(unwrapped / track.total_lap_length))
+            target_unwrapped = (first_full_lap + max_laps) * track.total_lap_length
+            completed_lap_floor = int(math.floor(unwrapped / track.total_lap_length))
 
         damage = _read_damage(vehicle)
         sample = TelemetrySample(
@@ -590,9 +709,6 @@ def _collect_samples(
                 f"speed={sample.speed_mps:.1f}m/s lateral={sample.lateral_error_m:.2f}m"
             )
 
-        if target_unwrapped is not None and unwrapped >= target_unwrapped:
-            break
-
         current_floor = int(math.floor(unwrapped / track.total_lap_length))
         if current_floor > completed_lap_floor:
             completed_lap_floor = current_floor
@@ -605,6 +721,9 @@ def _collect_samples(
             if clean_count >= clean_laps:
                 print(f"Collected requested clean laps: {clean_count}/{clean_laps}")
                 break
+
+        if target_unwrapped is not None and unwrapped >= target_unwrapped:
+            break
 
     return samples
 
