@@ -36,12 +36,24 @@
 | C | 737 | 153 |
 | D | 736 | 264 |
 
-### Phase 2 (supplementary)
-- obs_v2 (SBR+v21b+prev_action): ep_rew_mean = 889 at ~344k steps (fragmented sessions), rollout = 1005.9 m
-- Respawn (SBR+v21b+random_spawn): ep_rew_mean = 522 at ~485k steps (fixed-spawn eval pending)
+### Phase 2 (supplementary) — deterministic eval results
 
-### Phase 3 (in-progress at submission time)
-- v22b (SBR+v21b+obs_v2+soft_raceline): training at submission, ~20% complete
+| Run | Best progress | Best ckpt step | Term reason | Final-ckpt progress | Final ckpt step |
+|---|---|---|---|---|---|
+| SBR+v21b+obs_v2 (`v21b_subaru_16x_obs2_454steps`) | **1030.0 m** | 280k | off_track | 851.3 m | 150k |
+| SBR+v21b+respawn (`v21b_subaru_16x_respawn_150ksteps`) | **2138.1 m** | 336k | max_episode_steps | 868.8 m | 150k |
+
+*obs_v2 caveat: run was fragmented across multiple sessions; model_final.zip timestep is 150k (an earlier session end), not the full ~344k training budget. The 280k best checkpoint is from a checkpoint file, not the final model. ep_rew_mean peaked at 889 — highest of any condition — but the fragmented training makes direct comparison with A–D unreliable.*
+
+*Respawn caveat: the 2138.1 m best result is from a fixed-spawn deterministic eval (as per `eval_checkpoints.py`, which hardcodes `live_spawn_mode="bootstrap"`), so it is comparable to A–D on a same-start basis. Training used random spawns; the eval here measures what the random-spawn policy does from the fixed start. Final model row is at 150k steps (again an interrupted session end), not the full ~485k training budget.*
+
+### Phase 3 — v22b partial eval
+
+| Run | Best progress | Best ckpt step | Term reason | Final-ckpt progress | Notes |
+|---|---|---|---|---|---|
+| SBR+v22b+obs_v2 (`v22b_subaru_16x_obs2_100471steps`) | **1013.1 m** | 56k | damage | 778.0 m | ~100k steps only — undertrained |
+
+*v22b caveat: run reached ~100k steps at time of eval. This is approximately one-third of the A–D step budget. The 1013 m best-checkpoint figure is not directly comparable to A–D; treat as an early-training indicator only. A full 280k+ run is needed before drawing conclusions about v22b.*
 
 ---
 
