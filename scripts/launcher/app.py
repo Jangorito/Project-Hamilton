@@ -39,6 +39,8 @@ PROGRESS_FILE = LOG_DIR / "current_steps.txt"
 STOP_SIGNAL_FILE = LOG_DIR / "stop_signal.txt"
 WATCH_PID_FILE = LOG_DIR / "watch.pid"
 WATCH_LOG_FILE = LOG_DIR / "watch_latest.log"
+AI_RACELINE_PID = LOG_DIR / "ai_raceline.pid"
+AI_RACELINE_LOG = LOG_DIR / "ai_raceline_latest.log"
 SESSION_CONFIG_PATH = REPO_ROOT / "config" / "launcher_session.json"
 
 OBS_PORT = int(os.environ.get("OBS_PORT", 4455))
@@ -870,6 +872,18 @@ def _is_watching() -> bool:
     return _get_watch_pid() is not None
 
 
+def _process_running(pid: int) -> bool:
+    """Check if a process is still running by PID."""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True, text=True, timeout=2,
+        )
+        return str(pid) in result.stdout
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Routes — eval & watch
 # ---------------------------------------------------------------------------
@@ -991,6 +1005,87 @@ def api_watch_log():
 def api_stop_beamng():
     _kill_beamng()
     return jsonify({"ok": True, "message": "BeamNG killed."})
+
+
+@app.route("/api/collect_ai_raceline", methods=["POST"])
+def api_collect_ai_raceline():
+    """Launch AI raceline collection in BeamNG."""
+    data = request.get_json(force=True)
+    vehicle = str(data.get("vehicle", "etkc")).strip().lower()
+    if vehicle not in ("etkc", "sbr"):
+        return jsonify({"ok": False, "message": f"Unknown vehicle {vehicle!r}."}), 400
+    
+    aggression = float(data.get("aggression", 1.0))
+    racer_skill = float(data.get("racer_skill", 1.0))
+    speed_profile = str(data.get("speed_profile", "curvature")).strip().lower()
+    max_line_speed = float(data.get("max_line_speed", 42.0))
+    
+    _kill_beamng()
+    
+    AI_RACELINE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    log_f = AI_RACELINE_LOG.open("w", encoding="utf-8", buffering=1)
+    proc = subprocess.Popen(
+        [
+            str(PYTHON_EXE),
+            str(REPO_ROOT / "scripts" / "eval" / "collect_ai_raceline.py"),
+            "--vehicles", vehicle,
+            "--aggressions", str(aggression),
+            "--racer-skill", str(racer_skill),
+            "--speed-profile", speed_profile,
+            "--max-line-speed", str(max_line_speed),
+            "--max-laps", "2",
+        ],
+        stdout=log_f,
+        stderr=subprocess.STDOUT,
+        cwd=str(REPO_ROOT),
+    )
+    _watch_proc["proc"] = proc
+    _watch_proc["log_file"] = log_f
+    
+    AI_RACELINE_PID.parent.mkdir(parents=True, exist_ok=True)
+    AI_RACELINE_PID.write_text(str(proc.pid), encoding="utf-8")
+    
+    return jsonify({"ok": True, "message": f"AI raceline collection started: {vehicle} @ {aggression}."})
+
+
+@app.route("/api/collect_ai_raceline/status")
+def api_collect_ai_raceline_status():
+    pid = None
+    try:
+        pid = int(AI_RACELINE_PID.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pass
+    is_running = pid is not None and _process_running(pid)
+    return jsonify({"is_collecting": is_running})
+
+
+@app.route("/api/collect_ai_raceline/log")
+def api_collect_ai_raceline_log():
+    if not AI_RACELINE_LOG.exists():
+        return jsonify({"lines": ["No AI raceline collection active."]})
+    try:
+        text = AI_RACELINE_LOG.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()[-50:]
+        return jsonify({"lines": lines or ["(empty)"]})
+    except OSError:
+        return jsonify({"lines": ["Could not read AI raceline log."]})
+
+
+@app.route("/api/collect_ai_raceline/stop", methods=["POST"])
+def api_collect_ai_raceline_stop():
+    pid = None
+    try:
+        pid = int(AI_RACELINE_PID.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pass
+    if pid is None:
+        return jsonify({"ok": False, "message": "No AI raceline collection active."})
+    subprocess.run(["taskkill", "/F", "/PID", str(pid), "/T"], capture_output=True)
+    try:
+        AI_RACELINE_PID.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return jsonify({"ok": True, "message": "AI raceline collection stopped."})
 
 
 # ---------------------------------------------------------------------------

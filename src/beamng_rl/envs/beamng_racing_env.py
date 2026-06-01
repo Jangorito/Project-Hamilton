@@ -242,8 +242,8 @@ REWARD_CONFIGS: dict[str, RewardConfig] = {
         action_smoothness_weight=0.4,
         curvature_overspeed_weight=0.0,
         raceline_path="data/hirochi_track/physics_raceline.json",
-        raceline_lateral_weight=0.15,
-        raceline_overspeed_weight=0.3,
+        raceline_lateral_weight=0.10,
+        raceline_overspeed_weight=0.18,
         raceline_speed_lookahead_m=5.0,
     ),
 }
