@@ -95,6 +95,7 @@ _STEPS_PER_SECOND_FALLBACK = 27_000 / 7_200
 # speed, so it automatically adjusts when steps_per_action or physics rate changes.
 _pace: dict = {"mtime": 0.0, "steps": 0, "rate": None}
 _watch_proc: dict = {"proc": None, "log_file": None}
+_ai_raceline_proc: dict = {"proc": None, "log_file": None}
 
 # Guard: refuse to set max_damage below this to protect against fat-finger triggers
 _MIN_DAMAGE_THRESHOLD = 50.0
@@ -1024,6 +1025,11 @@ def api_collect_ai_raceline():
     
     AI_RACELINE_LOG.parent.mkdir(parents=True, exist_ok=True)
     log_f = AI_RACELINE_LOG.open("w", encoding="utf-8", buffering=1)
+    
+    # Set up environment with PYTHONPATH for venv context
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    
     proc = subprocess.Popen(
         [
             str(PYTHON_EXE),
@@ -1038,9 +1044,10 @@ def api_collect_ai_raceline():
         stdout=log_f,
         stderr=subprocess.STDOUT,
         cwd=str(REPO_ROOT),
+        env=env,
     )
-    _watch_proc["proc"] = proc
-    _watch_proc["log_file"] = log_f
+    _ai_raceline_proc["proc"] = proc
+    _ai_raceline_proc["log_file"] = log_f
     
     AI_RACELINE_PID.parent.mkdir(parents=True, exist_ok=True)
     AI_RACELINE_PID.write_text(str(proc.pid), encoding="utf-8")
@@ -1085,6 +1092,14 @@ def api_collect_ai_raceline_stop():
         AI_RACELINE_PID.unlink(missing_ok=True)
     except OSError:
         pass
+    lf = _ai_raceline_proc.get("log_file")
+    if lf:
+        try:
+            lf.close()
+        except Exception:
+            pass
+    _ai_raceline_proc["proc"] = None
+    _ai_raceline_proc["log_file"] = None
     return jsonify({"ok": True, "message": "AI raceline collection stopped."})
 
 
