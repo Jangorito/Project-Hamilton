@@ -25,6 +25,7 @@ if str(SRC_ROOT) not in sys.path:
 from stable_baselines3 import PPO
 
 from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv
+from beamng_rl.speed_modes import speed_mode_from_config
 from beamng_rl.training.run_manager import RunManager, _parse_timestep
 
 CENTRELINE_PATH = REPO_ROOT / "data" / "hirochi_track" / "centreline_resampled_2_0m.json"
@@ -81,14 +82,9 @@ def _run_vehicle_model(run_name: str, env_cfg: dict) -> str:
 
 
 def _run_speed_factor(env_cfg: dict) -> int | None:
-    value = env_cfg.get("speed_factor")
-    if value is None:
+    if env_cfg.get("speed_factor") is None and env_cfg.get("speed_mode") is None:
         return None
-    try:
-        speed_factor = int(value)
-    except (TypeError, ValueError):
-        return None
-    return speed_factor if speed_factor in (1, 2, 4, 8, 16, 32) else None
+    return speed_mode_from_config(env_cfg).requested_factor
 
 
 def _run_timing_profile(env_cfg: dict, speed_factor: int | None) -> str:
@@ -204,7 +200,9 @@ def main() -> None:
     print(f"Vehicle  : {vehicle_model}")
     print(f"Obs      : {obs_config}")
     print(f"Timing   : {timing_profile}")
-    print(f"Speed    : {speed_factor if speed_factor is not None else 'default'}x")
+    speed_mode = speed_mode_from_config(env_cfg)
+    speed_label = speed_mode.short_label if speed_factor is not None else "default"
+    print(f"Speed    : {speed_label}")
     print(f"Found    : {len(models)} model files")
     print(f"Steps    : {args.steps} per rollout")
     print("Launching BeamNG...")

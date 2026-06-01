@@ -5,6 +5,7 @@
   "fresh": false,
   "total_timesteps": 180000,
   "max_damage": 500.0,
+  "speed_mode": "turbo",
   "speed_factor": 16,
   "timing_profile": "det50ms",
   "reward_config": "v21b",
