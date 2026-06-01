@@ -319,6 +319,10 @@ Result at default params (μ=1.1, margin=0.5 m, engine_accel=8 m/s²): **~69.3 s
 - **Slot 2** (parallel): port `25253`, user folder `%LOCALAPPDATA%\BeamNG_w2`
 - `use_mock=True` (default) runs a toy physics model — safe for import, reward debugging, and CI-style checks without a BeamNG installation.
 
+> **Important remote note:** BeamNG GUI operations like `watch_model.py` require an interactive Windows desktop session. SSH sessions land in Session 0 with no visible GPU/window, so remote Flask launched from SSH may not be able to start BeamNG directly.
+>
+> The launcher now supports a fallback scheduled task named `HamiltonWatch`. It writes `config/watch_task.json` and runs `schtasks /run /tn HamiltonWatch` to start the watch runner in the interactive desktop session.
+
 **One-time slot 2 setup:**
 ```powershell
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\BeamNG_w2\BeamNG.tech\current"
