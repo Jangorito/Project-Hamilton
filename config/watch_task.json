@@ -1,0 +1,7 @@
+{
+  "model_path": "C:\\Users\\Jango\\workspace\\BeamNG\\models\\runs\\v21b_etk_16x_280ksteps\\checkpoints\\ppo_280000_steps.zip",
+  "run_name": "v21b_etk_16x_280ksteps",
+  "steps": 500,
+  "speed_factor": null,
+  "no_wait": true
+}
