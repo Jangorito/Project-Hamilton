@@ -58,7 +58,9 @@ V2 penalises jerky control and cornering overspeed more aggressively, and remove
 
 Two timing profiles exist and are functional:
 - `legacy_60hz` — real-time, 60 Hz, `speed_factor` must be 1 or None
-- `det50ms` — deterministic physics at 50 ms/frame, supports `speed_factor` 1–32×. At 2×, `_beamng_steps_per_second = 40` and wall-clock rate doubles.
+- `det50ms` — deterministic physics at 50 ms/frame. New launcher UX exposes speed modes: `1x`, `2x`, `4x`, and `Turbo`.
+
+`Turbo` is the compatibility replacement for the old user-facing `16x`/`32x` options. It still writes `speed_factor=16` so old configs and BeamNG timing code keep working, but event-log analysis of historical requested-16x runs shows actual end-to-end PPO training speed around 2–3×, not 16×. Legacy `speed_factor` values 8, 16, and 32 are accepted as Turbo aliases.
 
 `v1_etk_2x` successfully used `det50ms` + `speed_factor=2` and ran 165k timesteps. The fast-sim path works.
 
