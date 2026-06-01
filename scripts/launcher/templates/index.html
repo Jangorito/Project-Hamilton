@@ -705,6 +705,7 @@
       <div class="tab-bar">
         <button class="tab-btn tab-active" id="tab-train" onclick="switchTab('train')">Train</button>
         <button class="tab-btn" id="tab-eval" onclick="switchTab('eval')">Eval</button>
+        <button class="tab-btn" id="tab-collect" onclick="switchTab('collect')">Collect AI</button>
       </div>
 
       <div id="panel-train-config">
@@ -977,6 +978,70 @@
 
       </div><!-- #panel-eval-config -->
 
+      <div id="panel-collect-config" style="display:none">
+
+        <div class="panel-section">
+          <div class="section-label">Vehicle</div>
+          <div class="radio-group">
+            <label class="radio-option selected" onclick="setCollectVehicle('etkc')">
+              <input type="radio" name="collect-vehicle" value="etkc" checked>
+              <div class="radio-dot"></div>
+              <div>
+                <div class="radio-name">ETK K-Series</div>
+              </div>
+            </label>
+            <label class="radio-option" onclick="setCollectVehicle('sbr')">
+              <input type="radio" name="collect-vehicle" value="sbr">
+              <div class="radio-dot"></div>
+              <div>
+                <div class="radio-name">SBR4 Track</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <div class="section-label">AI Aggression</div>
+          <input type="number" class="input" id="collect-aggression" value="1.0" min="0.1" max="1.5" step="0.1" placeholder="1.0">
+        </div>
+
+        <div class="panel-section">
+          <div class="section-label">Speed Profile</div>
+          <div class="radio-group">
+            <label class="radio-option selected" onclick="setCollectSpeedProfile('curvature')">
+              <input type="radio" name="collect-speed-profile" value="curvature" checked>
+              <div class="radio-dot"></div>
+              <div>
+                <div class="radio-name">Curvature-aware</div>
+                <div class="radio-sub">Physics-derived targets per corner</div>
+              </div>
+            </label>
+            <label class="radio-option" onclick="setCollectSpeedProfile('constant')">
+              <input type="radio" name="collect-speed-profile" value="constant">
+              <div class="radio-dot"></div>
+              <div>
+                <div class="radio-name">Constant speed</div>
+                <div class="radio-sub">Fixed m/s throughout lap</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <div class="section-label">Max Line Speed</div>
+          <input type="number" class="input" id="collect-max-speed" value="42" min="10" max="60" step="1" placeholder="42">
+          <div style="font-size:11px; color:var(--muted); margin-top:4px;">m/s (95 km/h max)</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="btn-group">
+          <button class="btn btn-primary" id="collect-btn" onclick="startCollectAI()">Start Collecting</button>
+          <button class="btn btn-danger" id="collect-stop-btn" onclick="stopCollectAI()" disabled>Stop</button>
+        </div>
+
+      </div><!-- #panel-collect-config -->
+
     </div><!-- .panel-left -->
 
     <!-- ── Right panel: Monitor ───────────────────────────────── -->
@@ -1075,6 +1140,43 @@
         </div>
 
       </div><!-- #panel-eval-monitor -->
+
+      <div id="panel-collect-monitor" style="display:none">
+
+        <!-- Collection status -->
+        <div class="panel-section progress-wrap">
+          <div class="progress-title" id="collect-status-title">No collection active</div>
+        </div>
+
+        <!-- Collection log -->
+        <div class="panel-section">
+          <div class="log-header">
+            <div class="section-label" style="margin-bottom:0">Collection Log</div>
+            <div class="log-live-dot">
+              <div class="live-dot" id="collect-live-dot"></div>
+              <span id="collect-live-label">idle</span>
+            </div>
+          </div>
+          <div style="margin-top:8px">
+            <div class="log-container" id="collect-log-container">
+              <div class="log-line">Configure settings and click Start Collecting to begin.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick actions -->
+        <div class="panel-section">
+          <div class="section-label">Quick Actions</div>
+          <div class="actions-row">
+            <button class="btn btn-sm" onclick="killBeamNG()">Kill BeamNG</button>
+            <button class="btn btn-sm" onclick="wakeScreen()">Wake Screen</button>
+          </div>
+          <div style="font-size:11px; color:var(--muted); margin-top:8px;">
+            Results are exported to <code style="color:var(--yellow); font-family:var(--font-mono);">data/hirochi_track/</code>
+          </div>
+        </div>
+
+      </div><!-- #panel-collect-monitor -->
 
     </div>
   </div>
@@ -1881,14 +1983,21 @@ function switchTab(name) {
   currentTab = name;
   document.getElementById('tab-train').classList.toggle('tab-active', name === 'train');
   document.getElementById('tab-eval').classList.toggle('tab-active', name === 'eval');
+  document.getElementById('tab-collect').classList.toggle('tab-active', name === 'collect');
   document.getElementById('panel-train-config').style.display = name === 'train' ? '' : 'none';
   document.getElementById('panel-eval-config').style.display  = name === 'eval'  ? '' : 'none';
+  document.getElementById('panel-collect-config').style.display = name === 'collect' ? '' : 'none';
   document.getElementById('panel-train-monitor').style.display = name === 'train' ? '' : 'none';
   document.getElementById('panel-eval-monitor').style.display  = name === 'eval'  ? '' : 'none';
+  document.getElementById('panel-collect-monitor').style.display = name === 'collect' ? '' : 'none';
   if (name === 'eval') {
     loadEvalRuns();
     pollWatchStatus();
     pollWatchLog();
+  }
+  if (name === 'collect') {
+    pollCollectStatus();
+    pollCollectLog();
   }
 }
 
@@ -1992,6 +2101,94 @@ async function stopWatch() {
   setTimeout(pollWatchStatus, 1000);
 }
 
+// ── AI Raceline Collection ───────────────────────────────────
+
+let collectVehicle = 'etkc';
+let collectSpeedProfile = 'curvature';
+
+function setCollectVehicle(vehicle) {
+  collectVehicle = vehicle;
+  document.querySelectorAll('input[name="collect-vehicle"]').forEach(el => {
+    el.checked = el.value === vehicle;
+  });
+}
+
+function setCollectSpeedProfile(profile) {
+  collectSpeedProfile = profile;
+  document.querySelectorAll('input[name="collect-speed-profile"]').forEach(el => {
+    el.checked = el.value === profile;
+  });
+}
+
+async function startCollectAI() {
+  const aggression = parseFloat(document.getElementById('collect-aggression').value) || 1.0;
+  const maxSpeed = parseFloat(document.getElementById('collect-max-speed').value) || 42;
+
+  const btn = document.getElementById('collect-btn');
+  btn.disabled = true;
+  btn.textContent = 'Launching…';
+
+  try {
+    const r = await fetch('/api/collect_ai_raceline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vehicle: collectVehicle,
+        aggression: aggression,
+        racer_skill: 1.0,
+        speed_profile: collectSpeedProfile,
+        max_line_speed: maxSpeed,
+      }),
+    });
+    const d = await r.json();
+    toast(d.message, d.ok ? 'success' : 'error');
+    if (d.ok) {
+      setTimeout(pollCollectStatus, 2000);
+      setTimeout(pollCollectLog, 4000);
+    }
+  } catch (e) {
+    toast('Collection failed — is the server running?', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Start Collecting';
+  }
+}
+
+async function stopCollectAI() {
+  const r = await fetch('/api/collect_ai_raceline/stop', { method: 'POST' });
+  const d = await r.json();
+  toast(d.message, d.ok ? 'info' : 'error');
+  setTimeout(pollCollectStatus, 1000);
+}
+
+async function pollCollectStatus() {
+  try {
+    const r = await fetch('/api/collect_ai_raceline/status');
+    const d = await r.json();
+    const collecting = d.is_collecting;
+    document.getElementById('collect-status-title').textContent =
+      collecting ? `Collecting AI raceline (${collectVehicle})…` : 'No collection active';
+    document.getElementById('collect-btn').disabled = collecting || isTraining;
+    document.getElementById('collect-stop-btn').disabled = !collecting;
+    const dot = document.getElementById('collect-live-dot');
+    dot.classList.toggle('active', collecting);
+    document.getElementById('collect-live-label').textContent = collecting ? 'live' : 'idle';
+  } catch (e) {}
+}
+
+async function pollCollectLog() {
+  try {
+    const r = await fetch('/api/collect_ai_raceline/log');
+    const d = await r.json();
+    const el = document.getElementById('collect-log-container');
+    const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 20;
+    el.innerHTML = d.lines.map(l => `<div class="log-line">${escHtml(l)}</div>`).join('');
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch (e) {}
+}
+
+// ── Watch model ──────────────────────────────────────────────
+
 async function pollWatchStatus() {
   try {
     const r = await fetch('/api/watch/status');
@@ -2030,6 +2227,10 @@ setInterval(() => {
   if (currentTab === 'eval') {
     pollWatchStatus();
     pollWatchLog();
+  }
+  if (currentTab === 'collect') {
+    pollCollectStatus();
+    pollCollectLog();
   }
 }, 3000);
 
