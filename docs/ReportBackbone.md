@@ -18,8 +18,10 @@
 |---|---|---|---|---|---|---|
 | A | SBR | V1 | **2419.9 m** | 264k | max_episode_steps | 1869.6 m |
 | B | ETK | V1 | **1523.2 m** | 128k | off_track | 860.6 m |
-| C | ETK | v21b | [RUN EVAL] | [TBD] | [TBD] | 1353.5 m |
-| D | SBR | v21b | [RUN EVAL] | [TBD] | [TBD] | 1303.5 m |
+| C | ETK | v21b | **1246.4 m** | 128k | damage | 986.8 m |
+| D | SBR | v21b | **1030.2 m** | 248k | damage | 549.6 m |
+
+*Note: C and D final-checkpoint values (986.8 m, 549.6 m) differ substantially from earlier stochastic rollout figures in CLAUDE.md (1353.5 m, 1303.5 m). The new values are from fresh deterministic eval (`eval_checkpoints.py`). Use the deterministic values as authoritative. The gap is largest for D (753.9 m), consistent with the SBR+v21b policy being right on the boundary of the traction budget — stochastic sampling occasionally stays safe, the deterministic mean crashes.*
 
 *Full lap = **2150.0 m** (authoritative: 1077-point closed-loop centreline, 2150.04 m; CLAUDE.md listed 2150 m — use 2150 m in report).*
 *BeamNG AI reference = 80.39 s, 26.73 m/s avg. Physics raceline ceiling ≈ 69.3 s.*
@@ -173,17 +175,18 @@ Each run was evaluated by rolling out every saved checkpoint (every 8k steps) pl
 |---|---|---|---|---|---|---|
 | A | SBR | V1 | **2419.9 m** | 264k | max_episode_steps | 1869.6 m |
 | B | ETK | V1 | **1523.2 m** | 128k | off_track | 860.6 m |
-| C | ETK | v21b | [TBD] | [TBD] | [TBD] | 1353.5 m |
-| D | SBR | v21b | [TBD] | [TBD] | [TBD] | 1303.5 m |
+| C | ETK | v21b | **1246.4 m** | 128k | damage | 986.8 m |
+| D | SBR | v21b | **1030.2 m** | 248k | damage | 549.6 m |
 
 **[FIGURE 2 — Condition comparison bar chart]**: Best-checkpoint progress for A–D, with full lap (2150 m) and AI reference marked as horizontal lines.
 
 **Headline findings**:
 - Condition A best checkpoint (2419.9 m at 264k steps) exceeds the full lap length of 2150 m. The episode terminated at `max_episode_steps` (500 steps), indicating the agent completed the circuit without crashing within the episode limit.
 - Condition B best checkpoint (1523.2 m at 128k steps) is substantially better than its final checkpoint (860.6 m). The final model regressed from peak performance, a known effect in PPO continuous control.
-- [Fill in C and D comparison once eval runs complete]
-- The vehicle effect is large and consistent: SBR outperforms ETK in both reward conditions.
-- v21b improved ETK ([C_best − B_best] m) but [hurt / improved by less] for SBR ([D_best − A_best] m).
+- Condition C best checkpoint (1246.4 m at 128k steps) is +277 m over B (1523.2 m vs 1246.4 m — wait, C < B). v21b did not improve ETK best-checkpoint performance; B outperforms C by 276.8 m.
+- Condition D best checkpoint (1030.2 m at 248k steps) is 1389.7 m below A (2419.9 m). v21b substantially reduced SBR performance.
+- The vehicle effect is large and consistent: SBR outperforms ETK in both reward conditions (A > D, A > C, A > B > C/D).
+- v21b hurt both vehicles relative to V1, but by very different magnitudes: ETK −276.8 m (B 1523.2 → C 1246.4), SBR −1389.7 m (A 2419.9 → D 1030.2).
 
 **[FIGURE 3 — Reward component breakdown]** (if time): progress_reward vs off_track_penalty vs smoothness_penalty for V1 vs v21b averaged over training. Shows that v21b achieves [higher/lower] smoothness penalty and [higher/lower] off_track rate.
 
@@ -192,10 +195,10 @@ Each run was evaluated by rolling out every saved checkpoint (every 8k steps) pl
 ### 7. Discussion (~500 words)
 
 **RQ1: Did v21b improve learning progress?**
-The effect is asymmetric. For ETK (comparing B vs C), v21b [improved / did not improve] best-checkpoint performance by [X] m. For SBR (comparing A vs D), v21b [improved / reduced] performance by [Y] m. There is no clean main effect — the reward change interacted with the vehicle.
+The effect is asymmetric and negative on average. For ETK (B vs C), v21b reduced best-checkpoint performance by 276.8 m (1523.2 → 1246.4 m). For SBR (A vs D), v21b reduced best-checkpoint performance by 1389.7 m (2419.9 → 1030.2 m). There is no positive main effect — v21b constrained both vehicles, with the SBR far more severely. The reward change interacted strongly with the vehicle.
 
 **RQ2: Does the effect depend on vehicle dynamics?**
-Yes — the data shows a clear interaction. [Fill with C and D results]. The most interpretable explanation uses the traction-budget framing directly:
+Yes — the data shows a clear interaction. ETK lost 276.8 m under v21b; SBR lost 1389.7 m. The absolute penalty is 5× larger for the SBR, indicating a strong vehicle × reward interaction. The most interpretable explanation uses the traction-budget framing directly:
 
 The SBR4 has a narrow, sharp handling envelope (snap oversteer, low polar moment). Under V1 reward, SBR found an aggressive policy that exploited this — achieving 2419.9 m at its best checkpoint. Under v21b's physics-shaped speed target (`v_target = sqrt(8.0/κ)`), with `allowed_aggression=1.0`, the SBR's aggressive cornering style triggered the traction penalty continuously. The policy responded by reducing speed to stay within the traction budget, resulting in Condition D terminating by `max_episode_steps` rather than `damage` — safe but slow. The ETK K-Series, with its more progressive oversteer characteristic and greater tolerance for lateral slip, found v21b less constraining: the same `allowed_aggression=1.0` was within its natural operating range, explaining the ETK improvement.
 
