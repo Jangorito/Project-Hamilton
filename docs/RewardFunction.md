@@ -39,6 +39,22 @@ reward =
 
 Progress is the main signal because it approximates lap-time minimisation while remaining dense enough for learning. Speed is included but deliberately low-weighted because speed alone can encourage crashes, wall-riding, or poor brake usage. Heading alignment discourages sideways and backwards driving. Lateral error encourages stable track-following, but it must not permanently overconstrain the agent to the centreline because an optimal racing line may legitimately use more width. Off-track, reverse-progress, and stuck penalties make common failure modes explicit in logs and easier to debug.
 
+## V2.2-B Soft Racing-Line Prior
+
+`v22b` is a separate reward configuration from `v22`. It was added after the physics racing-line reward raised a design risk: a precomputed line can be useful as guidance, but a slow speed profile or overly strict line-distance term can make the agent optimise for being "correct" rather than being fast.
+
+The design intent is therefore to treat the physics racing line as a weak prior rather than a hard target:
+
+- Progress remains the dominant dense objective (`progress_weight = 1.0`).
+- V2.1-B traction and braking penalties remain active, so speed is still constrained by vehicle physics rather than by the raceline profile alone.
+- The raceline lateral term uses a corridor (`raceline_lateral_corridor_m = 1.25`), so small deviations from the reference line are not punished.
+- The raceline lateral penalty is speed-gated and heading-gated. It only becomes fully active when the car is moving quickly, aligned with the path, and making forward progress.
+- The raceline lateral weight decays across training (`raceline_weight_decay_steps = 120000`, final scale `0.25`), so the line acts more like an early scaffold than a permanent objective.
+- Slow "correct" behaviour is explicitly discouraged by `raceline_slow_speed_penalty_weight`; being near the line at very low speed is not treated as success.
+- The raceline speed profile is treated as a baseline to outperform. `raceline_baseline_speed_bonus_weight` rewards exceeding the profile after a small margin, while `raceline_overspeed_weight` is kept low and delayed by an overspeed margin.
+
+This makes `v22b` suitable for the dissertation framing: the reference line encodes prior knowledge about useful road-width usage, but the optimisation target remains quick, stable progress rather than imitation of the computed line.
+
 ## Progress Origin Note
 
 The live BeamNG spawn uses a hand-verified bootstrap pose near the painted start/finish marker. The centreline JSON raw progress at this pose may be near the wrap boundary rather than zero, so training should use episode-relative progress and progress deltas instead of assuming raw `progress_ratio` starts at zero. Lap completion should eventually be based on accumulated `episode_progress_m`.
