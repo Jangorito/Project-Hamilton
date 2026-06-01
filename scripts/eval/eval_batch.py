@@ -94,8 +94,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", nargs="+", default=None,
                     help="Run names to evaluate (default: DEFAULT_RUNS list in script)")
-    ap.add_argument("--port", type=int, default=25253,
-                    help="BeamNG port (default: 25253 — secondary instance)")
+    ap.add_argument("--port", type=int, default=25252,
+                    help="BeamNG port (default: 25252)")
     ap.add_argument("--beamng-user", default=None, metavar="PATH",
                     help="BeamNG user data folder for secondary instance "
                          "(e.g. %%LOCALAPPDATA%%\\BeamNG_w2)")
@@ -118,10 +118,6 @@ def main() -> None:
     for run_name in runs:
         ok = run_eval(run_name, args.port, args.beamng_user, args.steps, args.force)
         results.append((run_name, ok))
-        if ok:
-            # Brief pause between runs to let BeamNG fully shut down
-            print("[eval_batch] Waiting 10s for BeamNG cleanup...")
-            time.sleep(10)
 
     print(f"\n{'='*60}")
     print("[eval_batch] SUMMARY")

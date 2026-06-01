@@ -1120,25 +1120,21 @@ class BeamNGRacingEnv(gym.Env):
         """Reset BeamNG or initialise the mock vehicle state."""
 
         if not self.use_mock:
+            print("[RESET] ensure_live_connected...", flush=True)
             self._ensure_live_connected()
-
-            # Keep the car neutral during reset. BeamNG keeps the last control
-            # command until changed, so this prevents a stale throttle/brake
-            # input from affecting the first frame after reset.
+            print("[RESET] apply neutral control...", flush=True)
             self._last_control = {"steering": 0.0, "throttle": 0.0, "brake": 0.0}
             self._apply_action(self._last_control)
-
-            # Scenario restart is the cleanest reset when BeamNGpy owns the
-            # scenario. If it is unavailable, fall back to teleport/recover
-            # below so live-mode experimentation can still proceed.
+            print("[RESET] restart scenario...", flush=True)
             self._try_restart_live_scenario()
+            print("[RESET] place vehicle at start...", flush=True)
             self._try_place_live_vehicle_at_start()
-
-            # Step a tiny amount after teleport/restart so the state sensor has
-            # a fresh frame to report. Deterministic stepping is configured in
-            # _connect_beamng() when BeamNG accepts that setting.
+            print("[RESET] advance simulation...", flush=True)
             self._advance_simulation()
-            return self._get_vehicle_state()
+            print("[RESET] get vehicle state...", flush=True)
+            state = self._get_vehicle_state()
+            print("[RESET] done.", flush=True)
+            return state
 
         options = options or {}
         self._mock_progress_m = float(options.get("mock_progress_m", 0.0))
@@ -1181,13 +1177,6 @@ class BeamNGRacingEnv(gym.Env):
         if not self.use_mock:
             self._ensure_live_connected()
             try:
-                # BeamNGpy's deterministic step API assumes the simulator is
-                # paused. _connect_beamng() asks BeamNG for deterministic mode
-                # and pauses the sim; if a user changes that outside the env,
-                # this call may become realtime-ish again.
-                #
-                # TODO: expose the deterministic steps-per-second setting once
-                # training needs tighter control over policy frequency.
                 self.beamng.step(self._effective_steps_per_action, wait=True)
             except Exception as exc:
                 raise RuntimeError(
@@ -1558,9 +1547,6 @@ class BeamNGRacingEnv(gym.Env):
             except Exception:
                 pass
         except Exception:
-            # Scenario restart can fail if the user manually replaced/stopped
-            # the scenario. Teleport/recover below is still useful, so reset()
-            # does not fail solely because restart was unavailable.
             pass
 
     def _try_place_live_vehicle_at_start(self) -> None:
