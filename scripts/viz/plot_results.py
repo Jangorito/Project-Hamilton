@@ -283,11 +283,87 @@ def plot_reward_components(out_dir: Path) -> None:
     print(f"[plot] Saved {out_path}")
 
 
+def _component_series(col: str) -> list[tuple[dict, list[float], list[float]]]:
+    """Return plotted series for a reward component across all conditions."""
+    series = []
+    for cond in CONDITIONS.values():
+        rows = _read_metrics(cond["run"])
+        steps, vals = [], []
+        for row in rows:
+            if col not in row:
+                continue
+            try:
+                steps.append(int(row["step"]) / 1000)
+                vals.append(float(row[col]))
+            except (ValueError, TypeError):
+                continue
+        if steps:
+            series.append((cond, steps, vals))
+    return series
+
+
+def plot_reward_components_populated(out_dir: Path) -> None:
+    """Reward component trends, excluding panels with no visible signal."""
+    components = [
+        ("progress_reward", "Progress reward"),
+        ("off_track_penalty", "Off-track penalty"),
+        ("action_smoothness_penalty", "Smoothness penalty"),
+        ("curvature_overspeed_penalty", "Curvature overspeed"),
+        ("traction_budget_penalty", "Traction budget penalty"),
+    ]
+
+    populated = []
+    for col, title in components:
+        series = _component_series(col)
+        has_signal = any(any(abs(v) > 1e-9 for v in vals) for _, _, vals in series)
+        if series and has_signal:
+            populated.append((col, title, series))
+
+    if not populated:
+        print("[plot] WARNING: no populated reward component series found")
+        return
+
+    fig, axes = plt.subplots(1, len(populated), figsize=(4.2 * len(populated), 4), sharey=False)
+    if len(populated) == 1:
+        axes = [axes]
+
+    for ax, (_, title, series) in zip(axes, populated):
+        for cond, steps, vals in series:
+            smoothed = _smooth(vals, window=30)
+            ax.plot(
+                steps,
+                smoothed,
+                color=cond["color"],
+                linestyle=cond["linestyle"],
+                linewidth=1.5,
+                label=cond["label"],
+                alpha=0.85,
+            )
+
+        ax.set_title(title, fontsize=9)
+        ax.set_xlabel("Steps (k)", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(labelsize=7)
+
+    axes[0].set_ylabel("Mean per step", fontsize=9)
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=8)
+
+    fig.suptitle("Reward component breakdown — populated signals", fontsize=11)
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+    out_path = out_dir / "fig_reward_components_populated.png"
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"[plot] Saved {out_path}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--fig", choices=["all", "learning", "comparison", "rewards"],
+    ap.add_argument("--fig", choices=["all", "learning", "comparison", "rewards", "rewards-populated"],
                     default="all", help="Which figure(s) to generate")
     args = ap.parse_args()
 
@@ -301,6 +377,9 @@ def main() -> None:
 
     if args.fig in ("all", "rewards"):
         plot_reward_components(OUT_DIR)
+
+    if args.fig in ("all", "rewards-populated"):
+        plot_reward_components_populated(OUT_DIR)
 
 
 if __name__ == "__main__":
