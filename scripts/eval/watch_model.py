@@ -31,6 +31,7 @@ if str(SRC_ROOT) not in sys.path:
 from stable_baselines3 import PPO
 
 from beamng_rl.envs.beamng_racing_env import BeamNGRacingEnv
+from beamng_rl.speed_modes import speed_mode_from_config, speed_mode_from_factor
 from beamng_rl.training.run_manager import RunManager, _parse_timestep
 from beamng_rl.visualisation.debug_draw_path import DebugPathDrawer
 
@@ -138,25 +139,22 @@ def main() -> None:
     run_cfg = rm.load_config(run_name) if run_name else {}
     env_cfg = run_cfg.get("env", {}) if isinstance(run_cfg.get("env"), dict) else {}
     speed_factor: int | None = None
-    try:
-        sf = env_cfg.get("speed_factor")
-        if sf is not None:
-            speed_factor = int(sf)
-    except (TypeError, ValueError):
-        pass
+    if env_cfg.get("speed_factor") is not None or env_cfg.get("speed_mode") is not None:
+        speed_factor = speed_mode_from_config(env_cfg).requested_factor
     timing_profile: str | None = str(env_cfg.get("timing_profile", "")).strip().lower() or None
     if timing_profile not in ("legacy_60hz", "det50ms"):
         timing_profile = None
     steps_per_action = int(env_cfg.get("steps_per_action", 15))
     # CLI --speed-factor overrides run_config (e.g. force 1x for recording)
     if args.speed_factor is not None:
-        speed_factor = args.speed_factor
+        speed_factor = speed_mode_from_factor(args.speed_factor).requested_factor
 
     print(f"Run     : {run_name or '(direct path)'}")
     print(f"Model   : {model_path.name}")
     print(f"Vehicle : {vehicle_model}")
     print(f"Obs     : {obs_config}")
-    print(f"Timing  : {timing_profile or 'default'}  Speed: {speed_factor or 1}x")
+    speed_label = speed_mode_from_factor(speed_factor).short_label if speed_factor is not None else "1x"
+    print(f"Timing  : {timing_profile or 'default'}  Speed: {speed_label}")
     print("Launching BeamNG — watch the car drive in the BeamNG window.")
 
     env: BeamNGRacingEnv | None = None
