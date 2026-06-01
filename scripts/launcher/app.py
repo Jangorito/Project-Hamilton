@@ -1046,14 +1046,29 @@ def api_stop_beamng():
 def api_collect_ai_raceline():
     """Launch AI raceline collection in BeamNG."""
     data = request.get_json(force=True)
-    vehicle = str(data.get("vehicle", "etkc")).strip().lower()
-    if vehicle not in ("etkc", "sbr"):
-        return jsonify({"ok": False, "message": f"Unknown vehicle {vehicle!r}."}), 400
-    
-    aggression = float(data.get("aggression", 1.0))
+    raw_vehicles = data.get("vehicles", data.get("vehicle", "etkc"))
+    if isinstance(raw_vehicles, (list, tuple)):
+        vehicles = [str(value).strip().lower() for value in raw_vehicles]
+    else:
+        vehicles = [str(raw_vehicles).strip().lower()]
+    vehicles = [value for value in vehicles if value]
+    if not vehicles:
+        vehicles = ["etkc"]
+    unknown_vehicles = [value for value in vehicles if value not in ("both", "etkc", "sbr")]
+    if unknown_vehicles:
+        return jsonify({"ok": False, "message": f"Unknown vehicle {unknown_vehicles[0]!r}."}), 400
+
+    raw_aggressions = data.get("aggressions", data.get("aggression", 1.0))
+    if isinstance(raw_aggressions, (list, tuple)):
+        aggressions = [float(value) for value in raw_aggressions]
+    else:
+        aggressions = [float(raw_aggressions)]
     racer_skill = float(data.get("racer_skill", 1.0))
     speed_profile = str(data.get("speed_profile", "curvature")).strip().lower()
     max_line_speed = float(data.get("max_line_speed", 42.0))
+    max_laps = max(1, int(data.get("max_laps", 2)))
+    session_id = _current_windows_session_id()
+    use_nogfx = bool(data.get("nogfx", False)) or session_id == 0
     
     _kill_beamng()
     
@@ -1064,17 +1079,21 @@ def api_collect_ai_raceline():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC_ROOT)
     
+    cmd = [
+        str(PYTHON_EXE),
+        str(REPO_ROOT / "scripts" / "eval" / "collect_ai_raceline.py"),
+        "--vehicles", *vehicles,
+        "--aggressions", *(str(value) for value in aggressions),
+        "--racer-skill", str(racer_skill),
+        "--speed-profile", speed_profile,
+        "--max-line-speed", str(max_line_speed),
+        "--max-laps", str(max_laps),
+    ]
+    if use_nogfx:
+        cmd.append("--nogfx")
+
     proc = subprocess.Popen(
-        [
-            str(PYTHON_EXE),
-            str(REPO_ROOT / "scripts" / "eval" / "collect_ai_raceline.py"),
-            "--vehicles", vehicle,
-            "--aggressions", str(aggression),
-            "--racer-skill", str(racer_skill),
-            "--speed-profile", speed_profile,
-            "--max-line-speed", str(max_line_speed),
-            "--max-laps", "2",
-        ],
+        cmd,
         stdout=log_f,
         stderr=subprocess.STDOUT,
         cwd=str(REPO_ROOT),
@@ -1086,7 +1105,14 @@ def api_collect_ai_raceline():
     AI_RACELINE_PID.parent.mkdir(parents=True, exist_ok=True)
     AI_RACELINE_PID.write_text(str(proc.pid), encoding="utf-8")
     
-    return jsonify({"ok": True, "message": f"AI raceline collection started: {vehicle} @ {aggression}."})
+    return jsonify({
+        "ok": True,
+        "message": (
+            "AI raceline collection started: "
+            f"{', '.join(vehicles)} @ {', '.join(str(value) for value in aggressions)}."
+            + (" Running no-GFX because the launcher is in Session 0." if session_id == 0 else "")
+        ),
+    })
 
 
 @app.route("/api/collect_ai_raceline/status")
