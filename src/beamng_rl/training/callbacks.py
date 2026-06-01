@@ -23,6 +23,10 @@ _REWARD_KEYS = (
     "smoothness_penalty",
     "curvature_overspeed_penalty",
     "progress_jump_penalty",
+    "raceline_lateral_penalty",
+    "raceline_overspeed_penalty",
+    "raceline_slow_speed_penalty",
+    "raceline_baseline_speed_bonus",
     "total_reward",
 )
 
@@ -33,6 +37,13 @@ _REWARD_INFO_ENV_KEYS = (
     "heading_error_rad",
     "max_curvature_ahead",
     "curvature_target_speed",
+    "raceline_lateral_error_m",
+    "raceline_lateral_excess_m",
+    "raceline_target_speed_mps",
+    "raceline_speed_gate",
+    "raceline_heading_gate",
+    "raceline_decay_scale",
+    "raceline_effective_scale",
 )
 
 # Top-level info keys logged under env/ prefix.

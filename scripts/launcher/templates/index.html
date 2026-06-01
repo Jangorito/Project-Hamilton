@@ -777,6 +777,14 @@
               <div class="radio-sub">Physics raceline lateral ref + speed profile target</div>
             </div>
           </label>
+          <label class="radio-option" data-group="reward" data-value="v22b">
+            <input type="radio" name="reward" value="v22b">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2.2-B — Soft racing line</div>
+              <div class="radio-sub">Weak raceline prior · speed-gated · progress-first</div>
+            </div>
+          </label>
         </div>
       </div>
 
@@ -1248,6 +1256,22 @@
               <div class="radio-sub">V2.1-A + braking shortfall anticipation</div>
             </div>
           </label>
+          <label class="radio-option" data-group="reward-2" data-value="v22">
+            <input type="radio" name="reward-2" value="v22">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2.2 — Racing line</div>
+              <div class="radio-sub">Physics raceline lateral ref + speed profile target</div>
+            </div>
+          </label>
+          <label class="radio-option" data-group="reward-2" data-value="v22b">
+            <input type="radio" name="reward-2" value="v22b">
+            <div class="radio-dot"></div>
+            <div>
+              <div class="radio-name">V2.2-B — Soft racing line</div>
+              <div class="radio-sub">Weak raceline prior · speed-gated · progress-first</div>
+            </div>
+          </label>
         </div>
       </div>
 
@@ -1664,7 +1688,7 @@ function suggestedFreshRunName() {
 }
 
 function isAutoFreshRunName(value) {
-  return /^(v1|v2|v21a|v21b)_(subaru|etk)(_(2|4|8|16|32)x)?(_obs2)?(_respawn)?(_\d+(k|m)?steps)?$/i.test(value.trim());
+  return /^(v1|v2|v21a|v21b|v22|v22b)_(subaru|etk)(_(2|4|8|16|32)x)?(_obs2)?(_respawn)?(_\d+(k|m)?steps)?$/i.test(value.trim());
 }
 
 function updateFreshNameSuggestion() {
