@@ -12,3 +12,5 @@ models/*
 models/*.zip
 !models/.gitkeep
 models/.gitkeep
+
+assets/*.mp4
