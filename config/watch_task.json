@@ -1,7 +1,0 @@
-{
-  "model_path": "C:\\Users\\Jango\\workspace\\BeamNG\\models\\runs\\v22b_subaru_16x_obs2_100471steps\\checkpoints\\ppo_96000_steps.zip",
-  "run_name": "v22b_subaru_16x_obs2_100471steps",
-  "steps": 500,
-  "speed_factor": null,
-  "no_wait": true
-}

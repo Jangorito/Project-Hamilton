@@ -1,10 +1,45 @@
 # Project Hamilton
 
-BeamNG reinforcement-learning experiments and bootstrap utilities.
+Project Hamilton is a BeamNG.tech reinforcement-learning project for training
+continuous-control racing agents on Hirochi Raceway. The codebase wraps BeamNG
+with a Gymnasium-style environment, trains PPO policies with Stable-Baselines3,
+and includes utilities for track processing, training, evaluation, and
+visualisation.
+
+## Project Layout
+
+```text
+src/beamng_rl/
+  bootstrap/       BeamNG launch and setup helpers
+  envs/            Gymnasium environment and observation builder
+  track/           Centreline, racing-line, and geometry utilities
+  training/        Run management and training callbacks
+  visualisation/   Debug drawing and HUD helpers
+
+scripts/
+  env/             Environment checks and timing benchmarks
+  eval/            Rollout, checkpoint evaluation, and baseline collection
+  launcher/        Local Flask launcher for training runs
+  monitor/         Metric export helpers
+  train/           PPO training entry points
+  viz/             Plotting and raceline visualisation
+
+data/hirochi_track/
+  Track centreline and raceline reference data used by the environment.
+```
+
+## Requirements
+
+- Windows with BeamNG.tech installed
+- Python 3.10 or newer
+- A BeamNG.tech version compatible with `beamngpy==1.35.1`
+
+BeamNG.tech itself is not included in this repository. Set `BEAMNG_HOME` if the
+bootstrap cannot find your installation automatically.
 
 ## Setup
 
-Run these commands from the repository root in PowerShell.
+Run these commands from the repository root in PowerShell:
 
 ```powershell
 python -m venv .venv
@@ -13,147 +48,123 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 python -m pip install -r requirements.txt
 ```
 
-If the virtual environment was created as `venv` instead of `.venv`, activate it with:
+If you prefer a virtual environment named `venv`, use:
 
 ```powershell
+python -m venv venv
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-The execution-policy command only affects the current PowerShell session.
-
-## Launching The Bootstrap
-
-Because this project currently uses a `src` layout without an installable package file, set `PYTHONPATH` before launching:
+This project uses a `src` layout without an installable package file, so set
+`PYTHONPATH` before module-style commands:
 
 ```powershell
 $env:PYTHONPATH = "$PWD\src"
 ```
 
-Launch the current BeamNG bootstrap:
+Optional path overrides:
+
+```powershell
+$env:BEAMNG_HOME = "C:\Path\To\BeamNG.tech"
+$env:BEAMNG_TRACK_DATA_DIR = "$PWD\data\hirochi_track"
+```
+
+## Bootstrap And Visualisation
+
+Launch BeamNG with the project bootstrap:
 
 ```powershell
 python -m beamng_rl.bootstrap.beamng_bootstrap
 ```
 
-Launch the Student-machine shadow-disabling smoke test:
-
-```powershell
-python -m beamng_rl.bootstrap.beamng_bootstrap --disable-shadows
-```
-
-Launch the Student-machine editable low-graphics preset:
-
-```powershell
-python -m beamng_rl.bootstrap.beamng_bootstrap --low-graphics
-```
-
-Launch it with the derived Hirochi race path drawn in BeamNG:
+Draw the derived Hirochi path and optional overlays in BeamNG:
 
 ```powershell
 python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path
 ```
 
-Useful variants:
-
-```powershell
-python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path --resample-spacing 0
-python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path --sphere-every 10
-```
-
-## 'Student' Machine
-
-The bootstrap automatically checks this BeamNG install path:
-
-```text
-C:\Users\Student\BeamNG
-```
-
-Expected launch flow:
-
-```powershell
-cd C:\Users\Student\Workspace\Project-Hamilton
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-$env:PYTHONPATH = "$PWD\src"
-python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path
-```
-
-To test BeamNGpy graphics preferences without starting an RL training run, launch
-the bootstrap with shadows disabled:
-
-```powershell
-python -m beamng_rl.bootstrap.beamng_bootstrap --disable-shadows
-```
-
-This currently only attempts `$pref::Shadows::disable = 2` through BeamNGpy on
-the Student install. The bootstrap uses BeamNG's graphics settings API key
-`GraphicDisableShadows`, which the local BeamNG Lua maps to
-`$pref::Shadows::disable`; if BeamNGpy rejects it, the command prints a warning
-and continues.
-
-To apply a broader editable low-graphics preset:
+Apply the editable low-graphics preset:
 
 ```powershell
 python -m beamng_rl.bootstrap.beamng_bootstrap --low-graphics
 ```
 
-The preset is stored in:
-
-```text
-config\beamng_low_graphics.ini
-```
-
-That file is intentionally commented and ordered by expected hardware impact.
-Edit values there, then relaunch with `--low-graphics`. To test a different
-file without replacing the default:
+The preset lives in `config/beamng_low_graphics.ini` and can be replaced at
+runtime:
 
 ```powershell
 python -m beamng_rl.bootstrap.beamng_bootstrap --low-graphics --low-graphics-settings-file "config\beamng_low_graphics.ini"
 ```
 
-The default track-data directory on this machine is:
+## Training
 
-```text
-C:\Users\Student\Workspace\Project-Hamilton\data\hirochi_track
-```
-
-## Jango Machine
-
-The bootstrap automatically checks this BeamNG.tech install path:
-
-```text
-C:\Users\Jango\BeamNG.tech.v0.38.3.0
-```
-
-Expected launch flow:
+Start a fresh PPO run:
 
 ```powershell
-cd C:\Users\Jango\workspace\BeamNG
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-$env:PYTHONPATH = "$PWD\src"
-python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path
+python scripts\train\train_live_ppo_run.py --fresh --run-name example_run
 ```
 
-The default track-data directory on this machine is:
-
-```text
-C:\Users\Jango\workspace\BeamNG\data\hirochi_track
-```
-
-## Path Overrides
-
-If BeamNG or the track data live somewhere else, set environment variables for the current PowerShell session:
+Resume a named run:
 
 ```powershell
-$env:BEAMNG_HOME = "C:\Path\To\BeamNG.tech"
-$env:BEAMNG_TRACK_DATA_DIR = "$PWD\data\hirochi_track"
-python -m beamng_rl.bootstrap.beamng_bootstrap --draw-path
+python scripts\train\train_live_ppo_run.py --run-name example_run
 ```
 
-You can also pass the paths directly:
+Useful options include:
 
 ```powershell
-python -m beamng_rl.bootstrap.beamng_bootstrap --beamng-home "C:\Path\To\BeamNG.tech" --track-data-dir "$PWD\data\hirochi_track" --draw-path
+python scripts\train\train_live_ppo_run.py --fresh --run-name example_etk --car etkc --reward-config v1
+python scripts\train\train_live_ppo_run.py --fresh --run-name example_sbr --car sbr --reward-config v21b --obs-config v2
+python scripts\train\train_live_ppo_run.py --fresh --run-name example_respawn --spawn-mode random_checkpoint
 ```
+
+The Flask launcher provides a local UI for starting and monitoring runs:
+
+```powershell
+python scripts\launcher\app.py
+```
+
+Then open `http://localhost:5000`.
+
+## Evaluation
+
+Watch a trained model:
+
+```powershell
+python scripts\eval\watch_model.py --run example_run
+```
+
+Evaluate all checkpoints for a run:
+
+```powershell
+python scripts\eval\eval_checkpoints.py --run example_run
+```
+
+Log one live rollout to CSV:
+
+```powershell
+python scripts\eval\log_live_rollout.py --run example_run
+```
+
+Export TensorBoard metrics:
+
+```powershell
+python scripts\monitor\export_metrics.py --run example_run
+```
+
+## Reward And Observation Documentation
+
+- [FeaturesDescriptions.md](FeaturesDescriptions.md) describes the observation
+  vectors used by the policy.
+- [docs/RewardFunction.md](docs/RewardFunction.md) describes the reward
+  components and named reward configurations.
+
+## Generated Artefacts
+
+Training runs produce logs, TensorBoard events, checkpoints, rollout CSVs, and
+model archives. These artefacts can be large and machine-specific, so they are
+not intended to be committed wholesale. For public reporting, prefer selected
+figures, summary CSVs, and the exact run configuration needed to reproduce a
+result.

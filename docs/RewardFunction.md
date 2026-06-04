@@ -1,14 +1,18 @@
 # Reward Function Design
 
-## Purpose
+The reward is a dense proxy for racing performance. The long-term objective is
+to complete fast, clean laps, but lap time is too sparse to optimise directly at
+every policy step. The environment therefore rewards valid centreline progress
+and uses shaping terms to discourage unstable, off-track, or physically
+implausible behaviour.
 
-The reward is a dense proxy for racing performance. The final racing objective is low lap time, but lap time is too sparse to use directly during step-by-step learning. The current reward therefore uses centreline progress, forward speed, heading alignment, lateral control, and explicit failure penalties.
+## Base Formula
 
-## Current Formula
+The V1 reward family is built from these components:
 
 ```text
 reward =
-    progress_delta * progress_weight
+    progress_delta_m * progress_weight
     + forward_speed_mps * speed_weight
     - abs(heading_error_rad) * heading_error_weight
     - abs(lateral_error_m) * lateral_error_weight
@@ -16,89 +20,189 @@ reward =
     - reverse_progress_penalty_if_applicable
     - stuck_penalty_if_applicable
     - progress_jump_penalty_if_applicable
-    - |action_t - action_{t-1}|_1 * action_smoothness_weight
-    - max(0, forward_speed_mps - target_speed) * curvature_overspeed_weight
+    - abs(action_t - action_t_minus_1).sum() * action_smoothness_weight
+    - max(0, forward_speed_mps - target_speed_mps) * curvature_overspeed_weight
 ```
 
-## Components
+Later reward variants keep progress as the main objective while replacing or
+extending the speed-shaping terms.
 
-| Component | Initial value/weight | Purpose | Literature/design basis | Risk/TODO |
-| --- | ---: | --- | --- | --- |
-| Progress reward | `progress_weight = 1.0` | Make forward course progress the main dense learning signal. | Gran Turismo Sport RL uses course progress as a dense proxy because raw lap time is too sparse for step-by-step learning. | Centreline progress may later need replacing or comparing with racing-line progress. |
-| Forward speed reward | `speed_weight = 0.05` | Encourage useful longitudinal speed without letting speed dominate progress. | Formula RL and TORCS-style rewards include longitudinal speed. | Too much speed reward can encourage crashes, wall-riding, or poor braking. |
-| Heading error penalty | `heading_error_weight = 0.2` | Discourage sideways, spinning, or backwards driving. | Formula RL uses alignment between car direction and track or racing-line direction. | May need tuning for controlled oversteer or drift-like behaviour. |
-| Lateral error penalty | `lateral_error_weight = 0.1` | Encourage stable track-following near the centreline. | Racing RL rewards commonly penalise distance from road centre or track axis. | The centreline is not always the fastest racing line, so this penalty may overconstrain the agent. |
-| Excessive lateral error/off-track penalty | `max_lateral_error_m = 10.0`, `off_track_penalty = 10.0` | Make likely off-track states visibly bad in reward logs. | Formula RL discusses out-of-track termination; GT Sport adds penalties for wall exploitation. | Needs replacing or strengthening with true road-boundary and collision signals. |
-| Reverse progress penalty | `reverse_progress_penalty = 2.0` | Penalise meaningful movement against lap direction. | Formula RL discusses terminating backwards movement. | Termination is conservative for now; thresholding may be needed later. |
-| Stuck/no-progress penalty | `min_progress_delta_m = 0.05`, `stuck_step_penalty = 0.05` | Discourage stationary or barely moving behaviour before stuck termination. | Formula RL discusses slow-progress and max-step termination. | Needs tuning with the final simulator step rate and action repeat. |
-| Progress projection guard | `max_progress_delta_m = 50.0`, `progress_jump_penalty = 5.0` | Ignore one-frame centreline projection jumps that are too large to be real vehicle movement. | Defensive live-simulator guard. | Threshold may need tuning for other tracks or action repeat settings. |
-| Action smoothness penalty | `action_smoothness_weight = 0.1` | Penalise jerky steering/throttle changes (L1 norm of action delta). | Smoothness regularisation is common in robotics RL to reduce wear and improve real-world transfer. | Per-dimension weighting (heavier on steering than throttle) may be better. |
-| Curvature overspeed penalty | `curvature_overspeed_weight = 0.15`, target = `clamp(35 - 700 × curvature, 12, 35)` m/s | Penalise carrying excess speed into corners based on track curvature lookahead. | Racing-specific: penalise entering corners too fast to encourage braking. | Partially conflicts with speed reward — the two terms partially cancel on straights near the curvature threshold. |
+## Core Components
 
-## Design Rationale
+| Component | Purpose |
+| --- | --- |
+| Progress reward | Main dense learning signal; rewards metres advanced around the lap. |
+| Speed reward | Small V1-only bonus for useful forward velocity. |
+| Heading penalty | Discourages spinning, sideways motion, and driving against the track direction. |
+| Lateral penalty | Encourages stable track-following near the centreline. |
+| Off-track penalty | Penalises excessive lateral error and likely track exits. |
+| Reverse-progress penalty | Penalises movement backwards along the lap. |
+| Stuck penalty | Discourages stationary or barely moving behaviour before termination. |
+| Progress-jump guard | Filters impossible centreline projection jumps from live simulator data. |
+| Smoothness penalty | Penalises rapid steering/throttle changes. |
+| Curvature overspeed penalty | Penalises carrying too much speed into upcoming curvature. |
 
-Progress is the main signal because it approximates lap-time minimisation while remaining dense enough for learning. Speed is included but deliberately low-weighted because speed alone can encourage crashes, wall-riding, or poor brake usage. Heading alignment discourages sideways and backwards driving. Lateral error encourages stable track-following, but it must not permanently overconstrain the agent to the centreline because an optimal racing line may legitimately use more width. Off-track, reverse-progress, and stuck penalties make common failure modes explicit in logs and easier to debug.
+## Named Reward Configurations
 
-## V2.2-B Soft Racing-Line Prior
+The implementation exposes named presets through `REWARD_CONFIGS` in
+`src/beamng_rl/envs/beamng_racing_env.py`.
 
-`v22b` is a separate reward configuration from `v22`. It was added after the physics racing-line reward raised a design risk: a precomputed line can be useful as guidance, but a slow speed profile or overly strict line-distance term can make the agent optimise for being "correct" rather than being fast.
+| Config | Main idea |
+| --- | --- |
+| `v1` | Baseline progress, speed, heading, lateral, smoothness, and linear curvature-overspeed shaping. |
+| `v2` | Removes the flat speed bonus, increases smoothness, relaxes centreline pressure, and strengthens curvature overspeed. |
+| `v21a` | Replaces the linear curvature target with a physics-shaped traction-budget target. |
+| `v21b` | Adds braking-distance anticipation on top of `v21a`. |
+| `v22` | Uses a precomputed physics racing line as the lateral reference and speed-profile target. |
+| `v22b` | Treats the physics racing line as a soft prior while keeping progress and physics constraints dominant. |
 
-The design intent is therefore to treat the physics racing line as a weak prior rather than a hard target:
+## V1 Baseline
 
-- Progress remains the dominant dense objective (`progress_weight = 1.0`).
-- V2.1-B traction and braking penalties remain active, so speed is still constrained by vehicle physics rather than by the raceline profile alone.
-- The raceline lateral term uses a corridor (`raceline_lateral_corridor_m = 1.25`), so small deviations from the reference line are not punished.
-- The raceline lateral penalty is speed-gated and heading-gated. It only becomes fully active when the car is moving quickly, aligned with the path, and making forward progress.
-- The raceline lateral weight decays across training (`raceline_weight_decay_steps = 120000`, final scale `0.25`), so the line acts more like an early scaffold than a permanent objective.
-- Slow "correct" behaviour is explicitly discouraged by `raceline_slow_speed_penalty_weight`; being near the line at very low speed is not treated as success.
-- The raceline speed profile is treated as a baseline to outperform. `raceline_baseline_speed_bonus_weight` rewards exceeding the profile after a small margin, while `raceline_overspeed_weight` is kept low and delayed by an overspeed margin.
+V1 is the original hand-shaped dense reward:
 
-This makes `v22b` suitable for the dissertation framing: the reference line encodes prior knowledge about useful road-width usage, but the optimisation target remains quick, stable progress rather than imitation of the computed line.
+| Parameter | Value |
+| --- | ---: |
+| `progress_weight` | `1.0` |
+| `speed_weight` | `0.05` |
+| `heading_error_weight` | `0.2` |
+| `lateral_error_weight` | `0.1` |
+| `off_track_penalty` | `10.0` |
+| `reverse_progress_penalty` | `2.0` |
+| `stuck_step_penalty` | `0.05` |
+| `action_smoothness_weight` | `0.1` |
+| `curvature_overspeed_weight` | `0.15` |
 
-## Progress Origin Note
+The curvature target is linear:
 
-The live BeamNG spawn uses a hand-verified bootstrap pose near the painted start/finish marker. The centreline JSON raw progress at this pose may be near the wrap boundary rather than zero, so training should use episode-relative progress and progress deltas instead of assuming raw `progress_ratio` starts at zero. Lap completion should eventually be based on accumulated `episode_progress_m`.
+```text
+target_speed_mps = clamp(35.0 - 700.0 * max_curvature_ahead, 12.0, 35.0)
+```
 
-## Progress projection guard
+V1 is intentionally simple and inspectable, but the speed bonus can conflict
+with the overspeed penalty near corner entry.
 
-BeamNG live positions are projected onto a closed centreline. Near complex track geometry, nearest-point projection may occasionally jump to a distant part of the loop for one frame. Impossible progress deltas are detected after normal wrap handling, ignored for reward and episode progress, and given a small explicit penalty. This prevents one-frame projection artefacts from dominating training logs or PPO reward updates.
+## V2
+
+V2 keeps the V1 structure but changes four terms:
+
+| Parameter | V1 | V2 |
+| --- | ---: | ---: |
+| `speed_weight` | `0.05` | `0.0` |
+| `action_smoothness_weight` | `0.1` | `0.4` |
+| `lateral_error_weight` | `0.1` | `0.05` |
+| `curvature_overspeed_weight` | `0.15` | `0.3` |
+
+The design intent is to make speed valuable only when it produces progress,
+reduce steering oscillation, and allow more road-width usage than strict
+centreline following.
+
+## V2.1-A: Physics-Shaped Curvature Target
+
+`v21a` replaces the hand-tuned linear curvature target with a target derived
+from lateral acceleration:
+
+```text
+target_speed_mps = sqrt(lateral_accel_budget_mps2 / max(curvature, epsilon))
+target_speed_mps = clamp(target_speed_mps, min_corner_speed_mps, max_straight_speed_mps)
+risk_ratio = forward_speed_mps / target_speed_mps
+traction_penalty = max(0, risk_ratio - allowed_aggression) ** traction_budget_power
+                   * traction_budget_weight
+```
+
+Default values:
+
+| Parameter | Value |
+| --- | ---: |
+| `lateral_accel_budget_mps2` | `8.0` |
+| `min_corner_speed_mps` | `8.0` |
+| `max_straight_speed_mps` | `35.0` |
+| `curvature_epsilon` | `0.001` |
+| `allowed_aggression` | `1.0` |
+| `traction_budget_weight` | `3.0` |
+| `traction_budget_power` | `2.0` |
+
+This reframes overspeed as a traction-budget problem rather than a purely
+empirical speed penalty.
+
+## V2.1-B: Braking Anticipation
+
+`v21b` adds a braking-distance shortfall term. The policy is penalised when its
+current speed is too high to slow down for upcoming curvature within the
+lookahead distance:
+
+```text
+required_braking_distance_m =
+    max(0, current_speed_mps ** 2 - target_speed_mps ** 2)
+    / (2 * braking_accel_budget_mps2)
+
+braking_shortfall_m = max(0, required_braking_distance_m - lookahead_distance_m)
+braking_penalty = braking_shortfall_m * braking_shortfall_weight
+```
+
+Default values:
+
+| Parameter | Value |
+| --- | ---: |
+| `braking_accel_budget_mps2` | `9.0` |
+| `braking_shortfall_weight` | `0.1` |
+
+## V2.2: Racing-Line Reward
+
+`v22` introduces `data/hirochi_track/physics_raceline.json`. It removes the
+centreline lateral penalty and instead applies:
+
+| Parameter | Value |
+| --- | ---: |
+| `raceline_lateral_weight` | `0.10` |
+| `raceline_overspeed_weight` | `0.18` |
+| `raceline_speed_lookahead_m` | `5.0` |
+
+This version is useful for testing a stronger racing-line prior, but it can
+overconstrain behaviour if the policy optimises for matching the line rather
+than making fast, stable progress.
+
+## V2.2-B: Soft Racing-Line Prior
+
+`v22b` keeps the physics racing line available but treats it as guidance rather
+than a hard target. It combines the V2.1-B traction and braking terms with a
+weaker, gated, and decaying racing-line term.
+
+Key settings:
+
+| Parameter | Value |
+| --- | ---: |
+| `lateral_error_weight` | `0.03` |
+| `raceline_lateral_weight` | `0.06` |
+| `raceline_overspeed_weight` | `0.03` |
+| `raceline_lateral_corridor_m` | `1.25` |
+| `raceline_overspeed_margin_mps` | `4.0` |
+| `raceline_speed_gate_min_mps` | `8.0` |
+| `raceline_speed_gate_full_mps` | `22.0` |
+| `raceline_max_heading_error_rad` | `0.45` |
+| `raceline_weight_decay_steps` | `120000` |
+| `raceline_weight_final_scale` | `0.25` |
+| `raceline_slow_speed_penalty_weight` | `0.08` |
+| `raceline_baseline_speed_bonus_weight` | `0.06` |
+| `raceline_baseline_speed_margin_mps` | `1.0` |
+
+The line-distance term is ignored inside the corridor, fades in only at useful
+speeds and headings, and decays over training. This keeps the optimisation
+target focused on quick, stable progress rather than imitation.
+
+## Progress Origin
+
+The live BeamNG spawn is near the painted start/finish marker, but the raw
+closed-loop centreline progress at that pose may lie near the wrap boundary
+rather than exactly zero. Training therefore uses episode-relative progress and
+progress deltas instead of assuming that raw `progress_ratio` starts at zero.
 
 ## Known Limitations
 
 - The centreline is not necessarily the optimal racing line.
-- Lateral error penalties may need reducing later if the agent should discover wider racing lines.
-- Collision or wall-contact penalty is not yet implemented until BeamNG collision/damage data is connected.
-- The reward currently uses simple hand-tuned weights.
-- Future work should tune weights empirically and compare reward variants.
-
-## Planned Iterations
-
-- [ ] Add BeamNG collision/damage penalty.
-- [ ] Add wall-contact or impact penalty if available.
-- [ ] Tune lateral error penalty to avoid preventing out-in-out racing lines.
-- [ ] Compare centreline progress reward against racing-line progress reward if a racing line is later generated.
-- [x] Log reward components during training — all components returned in `reward_info` per step.
-- [ ] Plot reward components against episode performance.
-- [ ] Add reward ablation experiments if time allows.
-
-## Tunable Constants
-
-| Constant | Initial value | Where used |
-| --- | ---: | --- |
-| `progress_weight` | `1.0` | Multiplies centreline progress delta in metres. |
-| `speed_weight` | `0.05` | Multiplies forward speed in metres per second. |
-| `heading_error_weight` | `0.2` | Multiplies absolute heading error in radians. |
-| `lateral_error_weight` | `0.1` | Multiplies absolute signed lateral error in metres. |
-| `max_lateral_error_m` | `10.0` | Off-track termination and off-track penalty threshold. |
-| `off_track_penalty` | `10.0` | Applied when lateral error exceeds `max_lateral_error_m`. |
-| `reverse_progress_penalty` | `2.0` | Applied when progress delta is negative after wrap-around handling. |
-| `min_progress_delta_m` | `0.05` | Threshold for no-progress/stuck detection. |
-| `stuck_step_penalty` | `0.05` | Applied on steps below `min_progress_delta_m`. |
-| `stuck_steps_limit` | `100` | Terminates after repeated low-progress steps. |
-| `max_progress_delta_m` | `50.0` | Maximum allowed per-step progress delta after wrap handling. |
-| `progress_jump_penalty` | `5.0` | Applied when an impossible centreline projection jump is detected. |
-| `action_smoothness_weight` | `0.1` | Multiplies L1 norm of action delta `|action_t - action_{t-1}|` across both dimensions. |
-| `curvature_overspeed_weight` | `0.15` | Multiplies excess speed above the curvature-derived target. |
-| `curvature_target_speed_base` | `35.0` | Target speed in m/s on a straight (curvature ≈ 0). |
-| `curvature_target_speed_min` | `12.0` | Floor target speed in m/s for tight hairpins. |
-| `curvature_speed_scale` | `700.0` | Scales curvature → speed reduction: `target = base - scale × max_curvature_ahead`. |
+- Lateral error penalties can discourage wider out-in-out racing lines if set
+  too high.
+- Collision and wall-contact signals depend on available BeamNG telemetry.
+- Dense reward shaping is easier to learn from than sparse lap time, but it is
+  still a proxy for the final racing objective.
+- Best-checkpoint evaluation is usually more informative than final-checkpoint
+  evaluation because PPO performance can be non-monotonic.
