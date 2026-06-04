@@ -8,6 +8,7 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+game-settings-default.cs
 
 # Generated training artefacts.
 logs/
@@ -27,4 +28,3 @@ assets/*-palette.png
 settings/
 BeamNG.tech.ini
 env.env
-
