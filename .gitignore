@@ -1,3 +1,30 @@
 venv/
+.venv/
+
 __pycache__/
+*.py[cod]
+.pytest_cache/
+
+build/
+dist/
+*.egg-info/
+
+# Generated training artefacts.
+logs/
+models/*
+models/*.zip
+!models/.gitkeep
+
+# Large local media sources. Commit only small, deliberate README assets.
+assets/*.mp4
+assets/*.mov
+assets/*.mkv
+assets/*-palette.png
+
+# Local/editor/machine state.
+.claude/
+.vscode/
+settings/
+BeamNG.tech.ini
+env.env
 
