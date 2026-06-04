@@ -12,3 +12,6 @@ models/*
 models/*.zip
 !models/.gitkeep
 models/.gitkeep
+
+assets/*.mp4
+assets/*-palette.png
