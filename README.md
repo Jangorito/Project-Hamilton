@@ -6,6 +6,19 @@ with a Gymnasium-style environment, trains PPO policies with Stable-Baselines3,
 and includes utilities for track processing, training, evaluation, and
 visualisation.
 
+## Demo
+
+![V1 x SBR rollout preview](assets/v1-sbr.gif)
+
+[Watch the full V1 x SBR lap video on YouTube](https://youtu.be/Fq34qSjt8oc)
+
+## Launcher UI
+
+The project includes a local Flask launcher for configuring, starting, and
+monitoring training and evaluation runs.
+
+![Annotated Flask launcher UI](assets/Flask%20App%20Annotated.png)
+
 ## Project Layout
 
 ```text
